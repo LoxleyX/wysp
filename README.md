@@ -1,8 +1,26 @@
-# Wysp
+<p align="center">
+  <img src="logo.png" alt="Wysp" width="120" height="120">
+</p>
 
-**Local voice-to-text for any application.** Hold a hotkey, speak, release — your words appear at the cursor. 100% offline, no cloud, no telemetry.
+<h1 align="center">Wysp</h1>
 
-![Wysp Logo](logo.png)
+<p align="center">
+  <strong>Local voice-to-text for any application.</strong>
+</p>
+
+<p align="center">
+  Hold a hotkey, speak, release — your words appear at the cursor.<br>
+  100% offline. No cloud. No telemetry.
+</p>
+
+<p align="center">
+  <a href="https://github.com/LoxleyX/wysp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/LoxleyX/wysp?style=flat-square" alt="license"></a>
+  <img src="https://img.shields.io/badge/100%25-local-brightgreen?style=flat-square" alt="100% local">
+  <img src="https://img.shields.io/badge/built_with-Zig-f7a41d?style=flat-square" alt="built with Zig">
+  <img src="https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-blue?style=flat-square" alt="platforms">
+</p>
+
+---
 
 ## Features
 

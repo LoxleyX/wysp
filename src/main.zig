@@ -1,7 +1,7 @@
 //! Wysp - Local voice input tool
 //!
 //! Completely local, privacy-respecting speech-to-text.
-//! Hold Ctrl+Shift+Space to record, release to transcribe and type.
+//! Configurable hotkey (default: Ctrl+Shift+Space) to record and transcribe.
 
 const std = @import("std");
 const whisper = @import("whisper.zig");
@@ -10,6 +10,7 @@ const inject = @import("inject.zig");
 const hotkey = @import("hotkey.zig");
 const tray = @import("tray.zig");
 const overlay = @import("overlay.zig");
+const config = @import("config.zig");
 
 // Global state for callbacks
 var g_capture: ?*audio.AudioCapture = null;
@@ -17,6 +18,7 @@ var g_stt: ?*whisper.Whisper = null;
 var g_injector: ?*inject.TextInjector = null;
 var g_allocator: std.mem.Allocator = undefined;
 var g_running: bool = true;
+var g_config: config.Config = .{};
 
 // Settings
 var g_toggle_mode: bool = false;
@@ -150,6 +152,10 @@ fn onQuit() void {
     g_running = false;
 }
 
+pub fn getHotkeyString() ?[]const u8 {
+    return g_config.hotkey.format(g_allocator) catch null;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -157,6 +163,10 @@ pub fn main() !void {
     g_allocator = allocator;
 
     const stderr = std.io.getStdErr().writer();
+
+    // Load config
+    g_config = config.Config.load(allocator) catch .{};
+    g_toggle_mode = g_config.toggle_mode;
 
     // Find and load whisper model (suppress stdout during load)
     const model_path = whisper.findDefaultModel(allocator) orelse {
@@ -204,15 +214,18 @@ pub fn main() !void {
     defer tray.destroy();
     tray.onQuitClick(onQuit);
 
-    // Initialize hotkey
-    hotkey.init() catch |err| {
+    // Initialize hotkey with config
+    hotkey.initWithConfig(g_config.hotkey) catch |err| {
         try stderr.print("Failed to init hotkey: {}\n", .{err});
         return;
     };
     defer hotkey.deinit();
     hotkey.setCallbacks(onKeyPress, onKeyRelease);
 
-    try stderr.print("Wysp running. Hold Ctrl+Shift+Space to record. Right-click tray to quit.\n", .{});
+    // Show startup message with configured hotkey
+    const hotkey_str = g_config.hotkey.format(allocator) catch "Ctrl+Shift+Space";
+    defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) allocator.free(hotkey_str);
+    try stderr.print("Wysp running. Hold {s} to record. Right-click tray to quit.\n", .{hotkey_str});
 
     // Main loop - process GTK events
     while (g_running) {

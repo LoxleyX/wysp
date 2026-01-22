@@ -1,16 +1,18 @@
 //! Global Hotkey - Push-to-talk style
 //!
-//! Hold Ctrl+Shift+Space to record, release to stop and transcribe.
+//! Configurable hotkey for recording. Default: Ctrl+Shift+Space
 //! - X11: Uses XGrabKey for global hotkey capture
 //! - Wayland: Uses evdev for direct keyboard input (requires input group)
-//! - Windows: Uses RegisterHotKey (TODO)
+//! - Windows: Uses low-level keyboard hook
 
 const std = @import("std");
 const builtin = @import("builtin");
+const config = @import("config.zig");
 
 pub const HotkeyError = error{
     InitFailed,
     NotSupported,
+    InvalidKey,
 };
 
 /// Platform-specific hotkey implementation
@@ -24,9 +26,16 @@ pub const Hotkey = switch (builtin.os.tag) {
 var instance: ?*Hotkey = null;
 var instance_storage: Hotkey = undefined;
 
-/// Initialize hotkey system
+/// Initialize hotkey system with config
 pub fn init() !void {
-    instance_storage = try Hotkey.init();
+    instance_storage = try Hotkey.init(.{});
+    instance = &instance_storage;
+    try instance_storage.start();
+}
+
+/// Initialize hotkey system with custom hotkey config
+pub fn initWithConfig(hotkey_config: config.Config.Hotkey) !void {
+    instance_storage = try Hotkey.init(hotkey_config);
     instance = &instance_storage;
     try instance_storage.start();
 }
@@ -52,6 +61,7 @@ pub fn deinit() void {
 
 const LinuxHotkey = struct {
     backend: Backend,
+    hotkey_config: config.Config.Hotkey,
     on_press: ?*const fn () void = null,
     on_release: ?*const fn () void = null,
     running: bool = false,
@@ -76,10 +86,12 @@ const LinuxHotkey = struct {
         display: *x11.Display,
         root_window: x11.Window,
         target_keycode: x11.KeyCode,
+        modifiers: c_uint,
     };
 
     const EvdevBackend = struct {
         fd: std.posix.fd_t,
+        target_keycode: u16,
     };
 
     // evdev input event structure
@@ -99,22 +111,34 @@ const LinuxHotkey = struct {
     const KEY_RIGHTCTRL: u16 = 97;
     const KEY_LEFTSHIFT: u16 = 42;
     const KEY_RIGHTSHIFT: u16 = 54;
-    const KEY_SPACE: u16 = 57;
+    const KEY_LEFTALT: u16 = 56;
+    const KEY_RIGHTALT: u16 = 100;
+    const KEY_LEFTMETA: u16 = 125;
+    const KEY_RIGHTMETA: u16 = 126;
 
-    pub fn init() !Self {
+    pub fn init(hotkey_config: config.Config.Hotkey) !Self {
+        // Get the target key code for this platform
+        const keysym = config.keyNameToX11Keysym(hotkey_config.key) orelse return HotkeyError.InvalidKey;
+        const evdev_key = config.keyNameToEvdev(hotkey_config.key) orelse return HotkeyError.InvalidKey;
+
+        // Build X11 modifier mask
+        var x11_mods: c_uint = 0;
+        if (hotkey_config.ctrl) x11_mods |= x11.ControlMask;
+        if (hotkey_config.shift) x11_mods |= x11.ShiftMask;
+        if (hotkey_config.alt) x11_mods |= x11.Mod1Mask;
+        if (hotkey_config.super) x11_mods |= x11.Mod4Mask;
+
         // Try X11 first
         if (x11.XOpenDisplay(null)) |display| {
             const root_window = x11.DefaultRootWindow(display);
-            const keysym = x11.XK_space;
             const target_keycode = x11.XKeysymToKeycode(display, keysym);
 
-            // Grab key with Ctrl+Shift modifier (and variants for caps/num lock)
-            const mod = x11.ControlMask | x11.ShiftMask;
+            // Grab key with configured modifiers (and variants for caps/num lock)
             const mod_combos = [_]c_uint{
-                mod,
-                mod | x11.Mod2Mask,
-                mod | x11.LockMask,
-                mod | x11.Mod2Mask | x11.LockMask,
+                x11_mods,
+                x11_mods | x11.Mod2Mask,
+                x11_mods | x11.LockMask,
+                x11_mods | x11.Mod2Mask | x11.LockMask,
             };
 
             for (mod_combos) |mods| {
@@ -134,14 +158,17 @@ const LinuxHotkey = struct {
                     .display = display,
                     .root_window = root_window,
                     .target_keycode = target_keycode,
+                    .modifiers = x11_mods,
                 } },
+                .hotkey_config = hotkey_config,
             };
         }
 
         // Fall back to evdev for Wayland
         const fd = try findKeyboardDevice();
         return Self{
-            .backend = .{ .evdev = .{ .fd = fd } },
+            .backend = .{ .evdev = .{ .fd = fd, .target_keycode = evdev_key } },
+            .hotkey_config = hotkey_config,
         };
     }
 
@@ -175,12 +202,11 @@ const LinuxHotkey = struct {
 
         switch (self.backend) {
             .x11 => |b| {
-                const mod = x11.ControlMask | x11.ShiftMask;
                 const mod_combos = [_]c_uint{
-                    mod,
-                    mod | x11.Mod2Mask,
-                    mod | x11.LockMask,
-                    mod | x11.Mod2Mask | x11.LockMask,
+                    b.modifiers,
+                    b.modifiers | x11.Mod2Mask,
+                    b.modifiers | x11.LockMask,
+                    b.modifiers | x11.Mod2Mask | x11.LockMask,
                 };
                 for (mod_combos) |mods| {
                     _ = x11.XUngrabKey(b.display, b.target_keycode, mods, b.root_window);
@@ -242,7 +268,9 @@ const LinuxHotkey = struct {
 
         var ctrl_held = false;
         var shift_held = false;
-        var space_held = false;
+        var alt_held = false;
+        var super_held = false;
+        var key_held = false;
         var hotkey_active = false;
 
         var buf: [@sizeOf(InputEvent) * 64]u8 = undefined;
@@ -266,12 +294,22 @@ const LinuxHotkey = struct {
                 switch (ev.code) {
                     KEY_LEFTCTRL, KEY_RIGHTCTRL => ctrl_held = pressed or (ctrl_held and !released),
                     KEY_LEFTSHIFT, KEY_RIGHTSHIFT => shift_held = pressed or (shift_held and !released),
-                    KEY_SPACE => space_held = pressed or (space_held and !released),
-                    else => {},
+                    KEY_LEFTALT, KEY_RIGHTALT => alt_held = pressed or (alt_held and !released),
+                    KEY_LEFTMETA, KEY_RIGHTMETA => super_held = pressed or (super_held and !released),
+                    else => {
+                        if (ev.code == b.target_keycode) {
+                            key_held = pressed or (key_held and !released);
+                        }
+                    },
                 }
 
-                // Check hotkey state
-                const hotkey_pressed = ctrl_held and shift_held and space_held;
+                // Check hotkey state based on config
+                const cfg = self.hotkey_config;
+                const mods_match = (ctrl_held == cfg.ctrl) and
+                    (shift_held == cfg.shift) and
+                    (alt_held == cfg.alt) and
+                    (super_held == cfg.super);
+                const hotkey_pressed = mods_match and key_held;
 
                 if (hotkey_pressed and !hotkey_active) {
                     hotkey_active = true;
@@ -323,8 +361,9 @@ const LinuxHotkey = struct {
         if (result != 0) return false;
 
         // Check if space key (57) is supported - indicates keyboard
-        const space_byte = KEY_SPACE / 8;
-        const space_bit: u3 = @intCast(KEY_SPACE % 8);
+        const KEY_SPACE_CODE: u16 = 57;
+        const space_byte = KEY_SPACE_CODE / 8;
+        const space_bit: u3 = @intCast(KEY_SPACE_CODE % 8);
         return (bits[space_byte] & (@as(u8, 1) << space_bit)) != 0;
     }
 };
@@ -334,6 +373,7 @@ const LinuxHotkey = struct {
 // =============================================================================
 
 const WindowsHotkey = struct {
+    hotkey_config: config.Config.Hotkey,
     on_press: ?*const fn () void = null,
     on_release: ?*const fn () void = null,
     running: bool = false,
@@ -360,7 +400,9 @@ const WindowsHotkey = struct {
 
         const VK_CONTROL: DWORD = 0x11;
         const VK_SHIFT: DWORD = 0x10;
-        const VK_SPACE: DWORD = 0x20;
+        const VK_MENU: DWORD = 0x12; // Alt
+        const VK_LWIN: DWORD = 0x5B;
+        const VK_RWIN: DWORD = 0x5C;
 
         const KBDLLHOOKSTRUCT = extern struct {
             vkCode: DWORD,
@@ -396,12 +438,18 @@ const WindowsHotkey = struct {
     var g_instance: ?*Self = null;
     var g_ctrl_held: bool = false;
     var g_shift_held: bool = false;
-    var g_space_held: bool = false;
+    var g_alt_held: bool = false;
+    var g_super_held: bool = false;
+    var g_key_held: bool = false;
     var g_hotkey_active: bool = false;
     var g_thread_id: win32.DWORD = 0;
+    var g_target_vk: win32.DWORD = 0;
 
-    pub fn init() !Self {
-        var self = Self{};
+    pub fn init(hotkey_config: config.Config.Hotkey) !Self {
+        // Get the target virtual key code
+        g_target_vk = config.keyNameToVK(hotkey_config.key) orelse return HotkeyError.InvalidKey;
+
+        var self = Self{ .hotkey_config = hotkey_config };
         self.running = true;
         self.event_thread = try std.Thread.spawn(.{}, messageLoop, .{&self});
 
@@ -415,6 +463,10 @@ const WindowsHotkey = struct {
         }
 
         return self;
+    }
+
+    pub fn start(self: *Self) !void {
+        g_instance = self;
     }
 
     pub fn setCallbacks(self: *Self, press_cb: *const fn () void, release_cb: *const fn () void) void {
@@ -469,20 +521,29 @@ const WindowsHotkey = struct {
             switch (kbd.vkCode) {
                 win32.VK_CONTROL => g_ctrl_held = pressed or (g_ctrl_held and !released),
                 win32.VK_SHIFT => g_shift_held = pressed or (g_shift_held and !released),
-                win32.VK_SPACE => g_space_held = pressed or (g_space_held and !released),
-                else => {},
+                win32.VK_MENU => g_alt_held = pressed or (g_alt_held and !released),
+                win32.VK_LWIN, win32.VK_RWIN => g_super_held = pressed or (g_super_held and !released),
+                else => {
+                    if (kbd.vkCode == g_target_vk) {
+                        g_key_held = pressed or (g_key_held and !released);
+                    }
+                },
             }
 
-            const hotkey_pressed = g_ctrl_held and g_shift_held and g_space_held;
+            // Check hotkey state based on config
+            if (g_instance) |inst| {
+                const cfg = inst.hotkey_config;
+                const mods_match = (g_ctrl_held == cfg.ctrl) and
+                    (g_shift_held == cfg.shift) and
+                    (g_alt_held == cfg.alt) and
+                    (g_super_held == cfg.super);
+                const hotkey_pressed = mods_match and g_key_held;
 
-            if (hotkey_pressed and !g_hotkey_active) {
-                g_hotkey_active = true;
-                if (g_instance) |inst| {
+                if (hotkey_pressed and !g_hotkey_active) {
+                    g_hotkey_active = true;
                     if (inst.on_press) |cb| cb();
-                }
-            } else if (!hotkey_pressed and g_hotkey_active) {
-                g_hotkey_active = false;
-                if (g_instance) |inst| {
+                } else if (!hotkey_pressed and g_hotkey_active) {
+                    g_hotkey_active = false;
                     if (inst.on_release) |cb| cb();
                 }
             }

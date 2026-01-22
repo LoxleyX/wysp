@@ -26,7 +26,8 @@
 
 - **Completely Local** — Uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for on-device speech recognition. Your voice never leaves your machine.
 - **Universal Input** — Works with any application. Text is injected via simulated keystrokes.
-- **Push-to-Talk** — Hold `Ctrl+Shift+Space` to record, release to transcribe and type.
+- **Push-to-Talk** — Hold your hotkey to record, release to transcribe and type. Default: `Ctrl+Shift+Space`
+- **Configurable Hotkey** — Change the hotkey via `~/.wysp/config.json`
 - **Toggle Mode** — Optional tap-to-start, tap-to-stop mode for longer dictation.
 - **System Tray** — Runs quietly in your system tray with visual feedback when recording.
 - **Recent History** — Access your last 10 transcriptions from the tray menu. Click to copy.
@@ -140,6 +141,42 @@ This is useful for longer dictation where holding the keys is uncomfortable.
 
 The tray menu shows your last 10 transcriptions. Click any entry to copy it to your clipboard.
 
+## Configuration
+
+Wysp stores its configuration in `~/.wysp/config.json`. You can edit this file directly or use the "Edit Config" option in the tray menu.
+
+```json
+{
+  "hotkey": "Ctrl+Shift+Space",
+  "toggle_mode": false
+}
+```
+
+### Changing the Hotkey
+
+The hotkey format is `Modifier+Modifier+Key`. Supported modifiers:
+- `Ctrl` / `Control`
+- `Shift`
+- `Alt`
+- `Super` / `Win` / `Meta`
+
+Supported keys:
+- Letters: `A`-`Z`
+- Numbers: `0`-`9`
+- Function keys: `F1`-`F12`
+- Special: `Space`, `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`
+- Arrows: `Up`, `Down`, `Left`, `Right`
+
+Examples:
+```json
+{"hotkey": "Ctrl+Shift+Space"}
+{"hotkey": "Super+V"}
+{"hotkey": "Alt+Shift+R"}
+{"hotkey": "Ctrl+F9"}
+```
+
+**Note:** Restart Wysp after changing the hotkey.
+
 ## Custom Icons
 
 Place custom icons in the wysp directory:
@@ -161,8 +198,9 @@ Windows support is implemented but untested. Requires building whisper.cpp for W
 
 ### Hotkey not working
 
-- **X11**: Another application may have grabbed `Ctrl+Shift+Space`. Try closing other apps or check for conflicts.
+- **X11**: Another application may have grabbed your hotkey. Try a different key combination in `~/.wysp/config.json`.
 - **Wayland**: Ensure you're in the `input` group and have logged out/in.
+- **Invalid key**: Check that your hotkey uses supported modifiers and keys (see Configuration section).
 
 ### [BLANK_AUDIO] result
 

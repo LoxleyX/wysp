@@ -132,7 +132,16 @@ const LinuxTray = struct {
             return TrayError.InitFailed;
         }
 
-        gtk.gtk_status_icon_set_tooltip_text(status_icon, "Wysp - Hold Ctrl+Shift+Space to record");
+        // Set tooltip with configured hotkey
+        const main = @import("main.zig");
+        var tooltip_buf: [128]u8 = undefined;
+        const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
+        defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
+        const tooltip = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch "Wysp";
+        var tooltip_z: [128:0]u8 = undefined;
+        @memcpy(tooltip_z[0..tooltip.len], tooltip);
+        tooltip_z[tooltip.len] = 0;
+        gtk.gtk_status_icon_set_tooltip_text(status_icon, &tooltip_z);
         gtk.gtk_status_icon_set_visible(status_icon, 1);
 
         _ = gtk.g_signal_connect_data(
@@ -192,7 +201,16 @@ const LinuxTray = struct {
                 } else {
                     gtk.gtk_status_icon_set_from_icon_name(icon, "audio-input-microphone");
                 }
-                gtk.gtk_status_icon_set_tooltip_text(icon, "Wysp - Hold Ctrl+Shift+Space to record");
+                // Set tooltip with configured hotkey
+                const main = @import("main.zig");
+                var tooltip_buf: [128]u8 = undefined;
+                const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
+                defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
+                const tooltip = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch "Wysp";
+                var tooltip_z: [128:0]u8 = undefined;
+                @memcpy(tooltip_z[0..tooltip.len], tooltip);
+                tooltip_z[tooltip.len] = 0;
+                gtk.gtk_status_icon_set_tooltip_text(icon, &tooltip_z);
             }
         }
     }
@@ -213,6 +231,26 @@ const LinuxTray = struct {
 
         // Build menu dynamically each time
         const menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
+
+        // Hotkey display (disabled item showing current hotkey)
+        var hotkey_label_buf: [64]u8 = undefined;
+        const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
+        defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
+        const hotkey_label = std.fmt.bufPrint(&hotkey_label_buf, "Hotkey: {s}", .{hotkey_str}) catch "Hotkey: Ctrl+Shift+Space";
+        var hotkey_label_z: [64:0]u8 = undefined;
+        @memcpy(hotkey_label_z[0..hotkey_label.len], hotkey_label);
+        hotkey_label_z[hotkey_label.len] = 0;
+        const hotkey_item = gtk.gtk_menu_item_new_with_label(&hotkey_label_z);
+        gtk.gtk_widget_set_sensitive(hotkey_item, 0); // Disabled - just for display
+        gtk.gtk_menu_shell_append(@ptrCast(menu), hotkey_item);
+
+        // Edit config option
+        const config_item = gtk.gtk_menu_item_new_with_label("Edit Config (~/.wysp/config.json)");
+        _ = gtk.g_signal_connect_data(@ptrCast(config_item), "activate", @ptrCast(&onEditConfig), null, null, 0);
+        gtk.gtk_menu_shell_append(@ptrCast(menu), config_item);
+
+        // Separator
+        gtk.gtk_menu_shell_append(@ptrCast(menu), gtk.gtk_separator_menu_item_new());
 
         // Toggle mode checkbox
         const toggle_item = gtk.gtk_check_menu_item_new_with_label("Toggle Mode (tap to start/stop)");
@@ -320,6 +358,27 @@ const LinuxTray = struct {
     fn onClearHistory(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {
         const main = @import("main.zig");
         main.clearRecentTranscriptions();
+    }
+
+    fn onEditConfig(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {
+        const config = @import("config.zig");
+
+        // Ensure config file exists with defaults
+        var cfg = config.Config.load(std.heap.c_allocator) catch config.Config{};
+        cfg.save(std.heap.c_allocator) catch {};
+
+        // Get config path
+        const home = std.posix.getenv("HOME") orelse return;
+        var path_buf: [256]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/.wysp/config.json", .{home}) catch return;
+
+        // Open with xdg-open (Linux default)
+        var path_z: [256:0]u8 = undefined;
+        @memcpy(path_z[0..path.len], path);
+        path_z[path.len] = 0;
+
+        var child = std.process.Child.init(&[_][]const u8{ "xdg-open", path_z[0..path.len :0] }, std.heap.c_allocator);
+        _ = child.spawn() catch return;
     }
 
     fn onQuit(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {
@@ -466,8 +525,17 @@ const WindowsTray = struct {
     pub fn setRecording(self: *Self, recording: bool) void {
         if (!self.icon_added) return;
         @memset(&g_nid.szTip, 0);
-        const tip = if (recording) "Wysp - Recording..." else "Wysp - Hold Ctrl+Shift+Space to record";
-        @memcpy(g_nid.szTip[0..tip.len], tip);
+        if (recording) {
+            const tip = "Wysp - Recording...";
+            @memcpy(g_nid.szTip[0..tip.len], tip);
+        } else {
+            // Get configured hotkey
+            const main = @import("main.zig");
+            var tip_buf: [127]u8 = undefined;
+            const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
+            const tip = std.fmt.bufPrint(&tip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch "Wysp";
+            @memcpy(g_nid.szTip[0..tip.len], tip);
+        }
         _ = win32.Shell_NotifyIconA(win32.NIM_MODIFY, &g_nid);
     }
 

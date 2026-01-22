@@ -1,6 +1,6 @@
 #!/bin/sh
 # Wysp installer
-# Usage: curl -fsSL raw.githubusercontent.com/LoxleyX/wysp/main/scripts/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/LoxleyX/wysp/main/scripts/install.sh | sh
 
 set -e
 

@@ -540,6 +540,7 @@ const WindowsTray = struct {
     running: bool,
 
     const Self = @This();
+    const config = @import("config.zig");
 
     const win32 = struct {
         const DWORD = u32;
@@ -568,9 +569,24 @@ const WindowsTray = struct {
         const NIF_TIP: UINT = 4;
 
         const IDI_APPLICATION: usize = 32512;
-        const MF_STRING: UINT = 0;
+        const MF_STRING: UINT = 0x0000;
+        const MF_SEPARATOR: UINT = 0x0800;
+        const MF_POPUP: UINT = 0x0010;
+        const MF_CHECKED: UINT = 0x0008;
+        const MF_UNCHECKED: UINT = 0x0000;
+        const MF_GRAYED: UINT = 0x0001;
         const TPM_BOTTOMALIGN: UINT = 0x0020;
-        const TPM_LEFTALIGN: UINT = 0;
+        const TPM_LEFTALIGN: UINT = 0x0000;
+        const TPM_RETURNCMD: UINT = 0x0100;
+
+        // Menu item IDs
+        const ID_QUIT: usize = 1;
+        const ID_TOGGLE_MODE: usize = 10;
+        const ID_EDIT_CONFIG: usize = 20;
+        const ID_CLEAR_HISTORY: usize = 30;
+        const ID_MODEL_BASE: usize = 100; // 100-104 for models
+        const ID_LANG_BASE: usize = 200; // 200-201 for languages
+        const ID_RECENT_BASE: usize = 300; // 300-309 for recent
 
         const NOTIFYICONDATAA = extern struct {
             cbSize: DWORD,
@@ -627,12 +643,19 @@ const WindowsTray = struct {
         extern "user32" fn DispatchMessageA(lpMsg: *const MSG) callconv(.C) LRESULT;
         extern "user32" fn PostQuitMessage(nExitCode: i32) callconv(.C) void;
         extern "user32" fn CreatePopupMenu() callconv(.C) HMENU;
-        extern "user32" fn AppendMenuA(hMenu: HMENU, uFlags: UINT, uIDNewItem: usize, lpNewItem: [*:0]const u8) callconv(.C) BOOL;
+        extern "user32" fn AppendMenuA(hMenu: HMENU, uFlags: UINT, uIDNewItem: usize, lpNewItem: ?[*:0]const u8) callconv(.C) BOOL;
         extern "user32" fn TrackPopupMenu(hMenu: HMENU, uFlags: UINT, x: i32, y: i32, nReserved: i32, hWnd: HWND, prcRect: ?*anyopaque) callconv(.C) BOOL;
         extern "user32" fn DestroyMenu(hMenu: HMENU) callconv(.C) BOOL;
         extern "user32" fn GetCursorPos(lpPoint: *POINT) callconv(.C) BOOL;
         extern "user32" fn SetForegroundWindow(hWnd: HWND) callconv(.C) BOOL;
+        extern "user32" fn OpenClipboard(hWndNewOwner: HWND) callconv(.C) BOOL;
+        extern "user32" fn CloseClipboard() callconv(.C) BOOL;
+        extern "user32" fn EmptyClipboard() callconv(.C) BOOL;
+        extern "user32" fn SetClipboardData(uFormat: UINT, hMem: ?*anyopaque) callconv(.C) ?*anyopaque;
         extern "kernel32" fn GetModuleHandleA(lpModuleName: ?[*:0]const u8) callconv(.C) HINSTANCE;
+        extern "kernel32" fn GlobalAlloc(uFlags: UINT, dwBytes: usize) callconv(.C) ?*anyopaque;
+        extern "kernel32" fn GlobalLock(hMem: ?*anyopaque) callconv(.C) ?*anyopaque;
+        extern "kernel32" fn GlobalUnlock(hMem: ?*anyopaque) callconv(.C) BOOL;
     };
 
     var g_nid: win32.NOTIFYICONDATAA = undefined;
@@ -737,27 +760,238 @@ const WindowsTray = struct {
         switch (msg) {
             win32.WM_TRAYICON => {
                 if (@as(win32.UINT, @truncate(@as(usize, @bitCast(lParam)))) == win32.WM_RBUTTONUP) {
-                    // Show context menu
-                    const menu = win32.CreatePopupMenu();
-                    if (menu) |m| {
-                        _ = win32.AppendMenuA(m, win32.MF_STRING, 1, "Quit");
-
-                        var pt: win32.POINT = undefined;
-                        _ = win32.GetCursorPos(&pt);
-                        _ = win32.SetForegroundWindow(hwnd);
-                        _ = win32.TrackPopupMenu(m, win32.TPM_BOTTOMALIGN | win32.TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, null);
-                        _ = win32.DestroyMenu(m);
-                    }
+                    showContextMenu(hwnd);
                 }
                 return 0;
             },
             win32.WM_COMMAND => {
-                if (wParam == 1) { // Quit
-                    if (quit_callback) |cb| cb();
-                }
+                handleMenuCommand(wParam);
                 return 0;
             },
             else => return win32.DefWindowProcA(hwnd, msg, wParam, lParam),
+        }
+    }
+
+    fn showContextMenu(hwnd: win32.HWND) void {
+        const main = @import("main.zig");
+        const download = @import("download.zig");
+
+        const menu = win32.CreatePopupMenu() orelse return;
+
+        // Hotkey display (disabled)
+        var hotkey_buf: [128]u8 = [_]u8{0} ** 128;
+        const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
+        _ = std.fmt.bufPrint(&hotkey_buf, "Hotkey: {s}", .{hotkey_str}) catch {};
+        _ = win32.AppendMenuA(menu, win32.MF_STRING | win32.MF_GRAYED, 0, @ptrCast(&hotkey_buf));
+
+        // Edit Config
+        _ = win32.AppendMenuA(menu, win32.MF_STRING, win32.ID_EDIT_CONFIG, "Edit Config");
+
+        // Separator
+        _ = win32.AppendMenuA(menu, win32.MF_SEPARATOR, 0, null);
+
+        // Toggle Mode
+        const toggle_flags = win32.MF_STRING | (if (main.isToggleMode()) win32.MF_CHECKED else win32.MF_UNCHECKED);
+        _ = win32.AppendMenuA(menu, toggle_flags, win32.ID_TOGGLE_MODE, "Toggle Mode (tap to start/stop)");
+
+        // Separator
+        _ = win32.AppendMenuA(menu, win32.MF_SEPARATOR, 0, null);
+
+        // Model submenu
+        const cfg = main.getConfig();
+        const model_menu = win32.CreatePopupMenu();
+        if (model_menu) |mm| {
+            const models = [_]config.Config.Model{ .tiny, .base, .small, .medium, .large };
+            for (models, 0..) |model, i| {
+                var label_buf: [64]u8 = [_]u8{0} ** 64;
+                const display = model.displayName();
+
+                var test_cfg = config.Config{ .model = model, .language = cfg.language };
+                const exists = test_cfg.modelExists(std.heap.c_allocator);
+
+                const prefix: []const u8 = if (cfg.model == model) "* " else "  ";
+                const suffix: []const u8 = if (!exists) " [Download]" else "";
+                _ = std.fmt.bufPrint(&label_buf, "{s}{s}{s}", .{ prefix, display, suffix }) catch {};
+
+                const flags = win32.MF_STRING | (if (cfg.model == model) win32.MF_CHECKED else win32.MF_UNCHECKED);
+                _ = win32.AppendMenuA(mm, flags, win32.ID_MODEL_BASE + i, @ptrCast(&label_buf));
+            }
+            _ = win32.AppendMenuA(menu, win32.MF_POPUP, @intFromPtr(mm), "Model");
+        }
+
+        // Language submenu
+        const lang_menu = win32.CreatePopupMenu();
+        if (lang_menu) |lm| {
+            const languages = [_]config.Config.Language{ .english, .multilingual };
+            for (languages, 0..) |language, i| {
+                var label_buf: [64]u8 = [_]u8{0} ** 64;
+                const display = language.displayName();
+
+                const prefix: []const u8 = if (cfg.language == language) "* " else "  ";
+                _ = std.fmt.bufPrint(&label_buf, "{s}{s}", .{ prefix, display }) catch {};
+
+                const flags = win32.MF_STRING | (if (cfg.language == language) win32.MF_CHECKED else win32.MF_UNCHECKED);
+                _ = win32.AppendMenuA(lm, flags, win32.ID_LANG_BASE + i, @ptrCast(&label_buf));
+            }
+            _ = win32.AppendMenuA(menu, win32.MF_POPUP, @intFromPtr(lm), "Language");
+        }
+
+        // Download status
+        if (download.isDownloading()) {
+            _ = win32.AppendMenuA(menu, win32.MF_STRING | win32.MF_GRAYED, 0, "Downloading model...");
+        }
+
+        // Separator
+        _ = win32.AppendMenuA(menu, win32.MF_SEPARATOR, 0, null);
+
+        // Recent transcriptions submenu
+        const recent_menu = win32.CreatePopupMenu();
+        if (recent_menu) |rm| {
+            const recent = main.getRecentTranscriptions();
+            var has_recent = false;
+
+            var idx: usize = recent.len;
+            var menu_idx: usize = 0;
+            while (idx > 0 and menu_idx < 10) {
+                idx -= 1;
+                if (recent[idx]) |text| {
+                    has_recent = true;
+                    var label_buf: [48]u8 = [_]u8{0} ** 48;
+                    const max_display: usize = 30;
+                    const display_len: usize = @min(text.len, max_display);
+
+                    @memcpy(label_buf[0..display_len], text[0..display_len]);
+                    if (text.len > max_display) {
+                        label_buf[display_len] = '.';
+                        label_buf[display_len + 1] = '.';
+                        label_buf[display_len + 2] = '.';
+                    }
+
+                    _ = win32.AppendMenuA(rm, win32.MF_STRING, win32.ID_RECENT_BASE + menu_idx, @ptrCast(&label_buf));
+                    menu_idx += 1;
+                }
+            }
+
+            if (!has_recent) {
+                _ = win32.AppendMenuA(rm, win32.MF_STRING | win32.MF_GRAYED, 0, "(no recent transcriptions)");
+            } else {
+                _ = win32.AppendMenuA(rm, win32.MF_SEPARATOR, 0, null);
+                _ = win32.AppendMenuA(rm, win32.MF_STRING, win32.ID_CLEAR_HISTORY, "Clear History");
+            }
+            _ = win32.AppendMenuA(menu, win32.MF_POPUP, @intFromPtr(rm), "Recent Transcriptions");
+        }
+
+        // Separator
+        _ = win32.AppendMenuA(menu, win32.MF_SEPARATOR, 0, null);
+
+        // Quit
+        _ = win32.AppendMenuA(menu, win32.MF_STRING, win32.ID_QUIT, "Quit");
+
+        var pt: win32.POINT = undefined;
+        _ = win32.GetCursorPos(&pt);
+        _ = win32.SetForegroundWindow(hwnd);
+        _ = win32.TrackPopupMenu(menu, win32.TPM_BOTTOMALIGN | win32.TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, null);
+        _ = win32.DestroyMenu(menu);
+    }
+
+    fn handleMenuCommand(wParam: win32.WPARAM) void {
+        const main = @import("main.zig");
+        const download = @import("download.zig");
+        const cmd = @as(u16, @truncate(wParam));
+
+        if (cmd == win32.ID_QUIT) {
+            if (quit_callback) |cb| cb();
+        } else if (cmd == win32.ID_TOGGLE_MODE) {
+            main.setToggleMode(!main.isToggleMode());
+        } else if (cmd == win32.ID_EDIT_CONFIG) {
+            openConfigEditor();
+        } else if (cmd == win32.ID_CLEAR_HISTORY) {
+            main.clearRecentTranscriptions();
+        } else if (cmd >= win32.ID_MODEL_BASE and cmd < win32.ID_MODEL_BASE + 5) {
+            // Model selection
+            const model_idx = cmd - win32.ID_MODEL_BASE;
+            const models = [_]config.Config.Model{ .tiny, .base, .small, .medium, .large };
+            if (model_idx < models.len) {
+                const model = models[model_idx];
+                var cfg = main.getConfig();
+                cfg.model = model;
+                cfg.save(std.heap.c_allocator) catch {};
+                main.setConfig(cfg);
+
+                if (!cfg.modelExists(std.heap.c_allocator)) {
+                    download.startDownload(model, cfg.language) catch {};
+                }
+            }
+        } else if (cmd >= win32.ID_LANG_BASE and cmd < win32.ID_LANG_BASE + 2) {
+            // Language selection
+            const lang_idx = cmd - win32.ID_LANG_BASE;
+            const languages = [_]config.Config.Language{ .english, .multilingual };
+            if (lang_idx < languages.len) {
+                const language = languages[lang_idx];
+                var cfg = main.getConfig();
+                cfg.language = language;
+                cfg.save(std.heap.c_allocator) catch {};
+                main.setConfig(cfg);
+
+                if (!cfg.modelExists(std.heap.c_allocator)) {
+                    download.startDownload(cfg.model, language) catch {};
+                }
+            }
+        } else if (cmd >= win32.ID_RECENT_BASE and cmd < win32.ID_RECENT_BASE + 10) {
+            // Recent transcription - copy to clipboard
+            const recent_idx = cmd - win32.ID_RECENT_BASE;
+            const recent = main.getRecentTranscriptions();
+
+            // Find the item (reverse order like menu)
+            var idx: usize = recent.len;
+            var menu_idx: usize = 0;
+            while (idx > 0) {
+                idx -= 1;
+                if (recent[idx]) |text| {
+                    if (menu_idx == recent_idx) {
+                        copyToClipboard(text);
+                        return;
+                    }
+                    menu_idx += 1;
+                }
+            }
+        }
+    }
+
+    fn openConfigEditor() void {
+        // Ensure config exists
+        var cfg = config.Config.load(std.heap.c_allocator) catch config.Config{};
+        cfg.save(std.heap.c_allocator) catch {};
+
+        // Get config path
+        const appdata = std.process.getEnvVarOwned(std.heap.c_allocator, "USERPROFILE") catch return;
+        defer std.heap.c_allocator.free(appdata);
+
+        var path_buf: [512]u8 = [_]u8{0} ** 512;
+        const path = std.fmt.bufPrint(&path_buf, "{s}\\.wysp\\config.json", .{appdata}) catch return;
+
+        // Open with default editor (notepad on Windows)
+        var child = std.process.Child.init(&[_][]const u8{ "notepad.exe", path }, std.heap.c_allocator);
+        _ = child.spawn() catch {};
+    }
+
+    fn copyToClipboard(text: []const u8) void {
+        const text_z = std.heap.c_allocator.dupeZ(u8, text) catch return;
+        defer std.heap.c_allocator.free(text_z);
+
+        if (win32.OpenClipboard(null) == 0) return;
+        defer _ = win32.CloseClipboard();
+
+        _ = win32.EmptyClipboard();
+
+        const hmem = win32.GlobalAlloc(0x0002, text.len + 1); // GMEM_MOVEABLE
+        if (hmem) |h| {
+            if (win32.GlobalLock(h)) |ptr| {
+                @memcpy(@as([*]u8, @ptrCast(ptr))[0..text.len], text);
+                @as([*]u8, @ptrCast(ptr))[text.len] = 0;
+                _ = win32.GlobalUnlock(h);
+                _ = win32.SetClipboardData(1, h); // CF_TEXT
+            }
         }
     }
 };

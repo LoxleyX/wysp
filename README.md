@@ -162,12 +162,37 @@ sudo apt install libgtk-3-dev libx11-dev libxtst-dev
 ## Usage
 
 ```bash
-./zig-out/bin/wysp
+wysp              # GUI mode (default)
+wysp --cli        # CLI mode
+wysp --help       # Show all options
 ```
+
+### GUI Mode (Default)
 
 - **Hold `Ctrl+Shift+Space`** — Start recording
 - **Release** — Stop recording, transcribe, and type the result
 - **Right-click tray icon** — Access menu (toggle mode, history, quit)
+
+### CLI Mode
+
+Run without GUI for terminals, SSH sessions, tmux, or Termux on Android:
+
+```bash
+wysp --cli                  # Output to stdout
+wysp --tmux                 # Send to last active tmux pane
+wysp --tmux 0:1             # Send to specific tmux pane
+wysp --clip                 # Copy to clipboard
+wysp --duration 5           # Record for 5 seconds
+wysp --cli --duration 10    # Combine options
+```
+
+CLI mode workflow:
+1. Press Enter to start recording
+2. Speak
+3. Press Enter to stop
+4. Transcription is output/sent to target
+
+This is ideal for use with tmux - run Wysp in one pane and have transcriptions sent directly to another pane running your editor or Claude Code.
 
 ### Toggle Mode
 
@@ -260,6 +285,18 @@ Files:
 | Windows | Low-level keyboard hook | SendInput | Shell_NotifyIcon |
 
 Pre-built binaries are available for Linux (x86_64) and Windows (x86_64).
+
+### Termux (Android)
+
+CLI mode works in Termux on Android devices including e-ink tablets:
+
+```bash
+pkg install termux-api   # For clipboard support
+wysp --cli               # Basic CLI mode
+wysp --clip              # Uses termux-clipboard-set
+```
+
+Build whisper.cpp for ARM64 in Termux, or use pre-built models with a compatible whisper binary.
 
 ## Troubleshooting
 

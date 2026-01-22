@@ -11,6 +11,7 @@ const hotkey = @import("hotkey.zig");
 const tray = @import("tray.zig");
 const overlay = @import("overlay.zig");
 const config = @import("config.zig");
+const cli = @import("cli.zig");
 
 // Global state for callbacks
 var g_capture: ?*audio.AudioCapture = null;
@@ -172,6 +173,94 @@ pub fn main() !void {
     g_allocator = allocator;
 
     const stderr = std.io.getStdErr().writer();
+
+    // Parse command line arguments
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    var cli_mode = false;
+    var cli_options = cli.CliOptions{};
+    var show_help = false;
+
+    _ = args.next(); // skip program name
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            show_help = true;
+        } else if (std.mem.eql(u8, arg, "--cli")) {
+            cli_mode = true;
+        } else if (std.mem.eql(u8, arg, "--tmux")) {
+            cli_mode = true;
+            // Check if next arg is a target (doesn't start with -)
+            if (args.next()) |next| {
+                if (next.len > 0 and next[0] != '-') {
+                    cli_options.tmux_target = next;
+                } else {
+                    cli_options.tmux_target = ""; // auto-detect
+                    // Put it back for next iteration - we can't, so we need to handle it
+                    // Actually we need to check if it's another flag
+                    if (std.mem.eql(u8, next, "--clip")) {
+                        cli_options.clipboard = true;
+                    } else if (std.mem.eql(u8, next, "--duration")) {
+                        if (args.next()) |dur| {
+                            cli_options.duration = std.fmt.parseInt(u32, dur, 10) catch null;
+                        }
+                    }
+                }
+            } else {
+                cli_options.tmux_target = ""; // auto-detect
+            }
+        } else if (std.mem.eql(u8, arg, "--clip")) {
+            cli_mode = true;
+            cli_options.clipboard = true;
+        } else if (std.mem.eql(u8, arg, "--duration")) {
+            cli_mode = true;
+            if (args.next()) |dur| {
+                cli_options.duration = std.fmt.parseInt(u32, dur, 10) catch null;
+            }
+        }
+    }
+
+    if (show_help) {
+        try stderr.print(
+            \\Wysp - Local voice-to-text
+            \\
+            \\Usage: wysp [OPTIONS]
+            \\
+            \\Options:
+            \\  --help, -h         Show this help message
+            \\  --cli              Run in CLI mode (no GUI)
+            \\  --tmux [TARGET]    Send transcription to tmux pane
+            \\  --clip             Copy transcription to clipboard
+            \\  --duration N       Record for N seconds (default: press Enter)
+            \\
+            \\GUI Mode (default):
+            \\  Runs in system tray. Hold hotkey to record, release to transcribe.
+            \\  Right-click tray icon for settings.
+            \\
+            \\CLI Mode:
+            \\  Press Enter to start/stop recording. Output goes to stdout.
+            \\  Combine with --tmux or --clip for different output targets.
+            \\
+            \\Examples:
+            \\  wysp                     Start GUI mode
+            \\  wysp --cli               CLI mode, output to stdout
+            \\  wysp --tmux              Send to last active tmux pane
+            \\  wysp --tmux 0:1          Send to specific tmux pane
+            \\  wysp --clip              Copy to clipboard
+            \\  wysp --duration 5        Record for 5 seconds
+            \\
+        , .{});
+        return;
+    }
+
+    if (cli_mode) {
+        cli.run(allocator, cli_options) catch |err| {
+            if (err != error.NoModel) {
+                try stderr.print("CLI error: {}\n", .{err});
+            }
+        };
+        return;
+    }
 
     // Load config
     g_config = config.Config.load(allocator) catch .{};

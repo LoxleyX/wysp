@@ -24,13 +24,13 @@ pub fn build(b: *std.Build) void {
     const target_os = target.result.os.tag;
 
     if (target_os == .linux) {
-        // Whisper.cpp libraries (pre-built in ~/.ziew/)
+        // Whisper.cpp libraries - check env vars first (CI), then fallback to ~/.ziew/
         const home = std.posix.getenv("HOME") orelse "/home/user";
-        const ziew_lib = b.fmt("{s}/.ziew/lib", .{home});
-        const ziew_include = b.fmt("{s}/.ziew/include", .{home});
+        const whisper_lib = std.posix.getenv("WHISPER_LIB") orelse b.fmt("{s}/.ziew/lib", .{home});
+        const whisper_include = std.posix.getenv("WHISPER_INCLUDE") orelse b.fmt("{s}/.ziew/include", .{home});
 
-        exe.addLibraryPath(.{ .cwd_relative = ziew_lib });
-        exe.addIncludePath(.{ .cwd_relative = ziew_include });
+        exe.addLibraryPath(.{ .cwd_relative = whisper_lib });
+        exe.addIncludePath(.{ .cwd_relative = whisper_include });
         exe.linkSystemLibrary("whisper");
         exe.linkSystemLibrary("ggml");
         exe.linkSystemLibrary("ggml-base");
@@ -49,11 +49,9 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibrary("gtk+-3.0");
 
         // Set rpath so it finds whisper libs at runtime
-        exe.addRPath(.{ .cwd_relative = ziew_lib });
+        exe.addRPath(.{ .cwd_relative = whisper_lib });
     } else if (target_os == .windows) {
-        // Windows libraries
-        // Whisper.cpp would need to be built for Windows and paths adjusted
-        // For now, placeholder paths - user needs to set up whisper libs
+        // Windows libraries - check env vars for whisper location
         if (std.posix.getenv("WHISPER_LIB")) |whisper_lib| {
             exe.addLibraryPath(.{ .cwd_relative = whisper_lib });
         }
@@ -61,8 +59,11 @@ pub fn build(b: *std.Build) void {
             exe.addIncludePath(.{ .cwd_relative = whisper_include });
         }
         exe.linkSystemLibrary("whisper");
+        exe.linkSystemLibrary("ggml");
+        exe.linkSystemLibrary("ggml-base");
+        exe.linkSystemLibrary("ggml-cpu");
 
-        // Windows system libraries (linked via Zig's Windows support)
+        // Windows system libraries
         exe.linkSystemLibrary("user32");
         exe.linkSystemLibrary("shell32");
         exe.linkSystemLibrary("kernel32");

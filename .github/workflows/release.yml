@@ -6,63 +6,140 @@ on:
       - 'v*'
 
 jobs:
-  build-linux:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev
+          sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev mingw-w64
 
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.13.0
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp (Linux)
         run: |
           git clone https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
           cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/.wysp
-          cmake --build build --config Release
+          cmake --build build --config Release -j$(nproc)
           cmake --install build
 
-      - name: Build wysp
+      - name: Build whisper.cpp (Windows cross-compile)
         run: |
-          # Point to whisper libs
+          cd whisper.cpp
+          cmake -B build-win \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_INSTALL_PREFIX=$HOME/.wysp-win \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build build-win --config Release -j$(nproc)
+          cmake --install build-win
+
+      - name: Build wysp (Linux)
+        run: |
           export WHISPER_LIB=$HOME/.wysp/lib
           export WHISPER_INCLUDE=$HOME/.wysp/include
           zig build -Doptimize=ReleaseFast
 
-      - name: Package
+      - name: Build wysp (Windows)
+        run: |
+          export WHISPER_LIB=$HOME/.wysp-win/lib
+          export WHISPER_INCLUDE=$HOME/.wysp-win/include
+          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu
+          mv zig-out/bin/wysp.exe zig-out/bin/wysp-windows.exe
+          # Rebuild for Linux
+          export WHISPER_LIB=$HOME/.wysp/lib
+          export WHISPER_INCLUDE=$HOME/.wysp/include
+          zig build -Doptimize=ReleaseFast
+
+      - name: Package Linux binary
         run: |
           mkdir -p wysp-linux-x86_64
           cp zig-out/bin/wysp wysp-linux-x86_64/
           cp README.md LICENSE wysp-linux-x86_64/
           cp logo.png logo-recording.png wysp-linux-x86_64/ 2>/dev/null || true
-          cp install.sh wysp-linux-x86_64/
           tar -czvf wysp-linux-x86_64.tar.gz wysp-linux-x86_64
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wysp-linux-x86_64
-          path: wysp-linux-x86_64.tar.gz
+      - name: Package Windows binary
+        run: |
+          mkdir -p wysp-windows-x86_64
+          cp zig-out/bin/wysp-windows.exe wysp-windows-x86_64/wysp.exe
+          cp README.md LICENSE wysp-windows-x86_64/
+          cp logo.png logo-recording.png wysp-windows-x86_64/ 2>/dev/null || true
+          zip -r wysp-windows-x86_64.zip wysp-windows-x86_64
 
-  release:
-    needs: [build-linux]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - name: Create Debian package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_DIR=wysp_${VERSION}_amd64
+
+          mkdir -p ${PKG_DIR}/DEBIAN
+          mkdir -p ${PKG_DIR}/usr/bin
+          mkdir -p ${PKG_DIR}/usr/share/applications
+          mkdir -p ${PKG_DIR}/usr/share/icons/hicolor/128x128/apps
+          mkdir -p ${PKG_DIR}/usr/share/doc/wysp
+
+          cp zig-out/bin/wysp ${PKG_DIR}/usr/bin/
+          cp README.md LICENSE ${PKG_DIR}/usr/share/doc/wysp/
+          cp logo.png ${PKG_DIR}/usr/share/icons/hicolor/128x128/apps/wysp.png 2>/dev/null || true
+
+          cat > ${PKG_DIR}/DEBIAN/control << 'EOF'
+          Package: wysp
+          Version: ${VERSION}
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Depends: libgtk-3-0, libx11-6, libxtst6
+          Maintainer: Wysp <wysp@example.com>
+          Description: Local voice-to-text for any application
+           Wysp is a completely local, privacy-respecting speech-to-text tool.
+           Hold a hotkey, speak, release - your words appear at the cursor.
+           100% offline. No cloud. No telemetry.
+          EOF
+          # Fix indentation (control file must not have leading spaces)
+          sed -i 's/^          //' ${PKG_DIR}/DEBIAN/control
+          # Substitute version
+          sed -i "s/\${VERSION}/${VERSION}/" ${PKG_DIR}/DEBIAN/control
+
+          cat > ${PKG_DIR}/usr/share/applications/wysp.desktop << 'EOF'
+          [Desktop Entry]
+          Name=Wysp
+          Comment=Local voice-to-text for any application
+          Exec=wysp
+          Icon=wysp
+          Terminal=false
+          Type=Application
+          Categories=Audio;Utility;
+          Keywords=voice;speech;dictation;transcription;
+          EOF
+          sed -i 's/^          //' ${PKG_DIR}/usr/share/applications/wysp.desktop
+
+          dpkg-deb --build ${PKG_DIR}
+          mv ${PKG_DIR}.deb wysp_${VERSION}_amd64.deb
+
+      - name: Create source package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          git archive --format=tar.gz --prefix=wysp-${VERSION}/ HEAD > wysp-${VERSION}-source.tar.gz
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            wysp-linux-x86_64/wysp-linux-x86_64.tar.gz
+            wysp-linux-x86_64.tar.gz
+            wysp-windows-x86_64.zip
+            wysp_${{ steps.version.outputs.VERSION }}_amd64.deb
+            wysp-${{ steps.version.outputs.VERSION }}-source.tar.gz
           generate_release_notes: true

@@ -504,14 +504,45 @@ const LinuxTray = struct {
         const home = std.posix.getenv("HOME") orelse return;
         var path_buf: [256]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "{s}/.wysp/config.json", .{home}) catch return;
-
-        // Open with xdg-open (Linux default)
         var path_z: [256:0]u8 = undefined;
         @memcpy(path_z[0..path.len], path);
         path_z[path.len] = 0;
 
-        var child = std.process.Child.init(&[_][]const u8{ "xdg-open", path_z[0..path.len :0] }, std.heap.c_allocator);
-        _ = child.spawn() catch return;
+        // Try $VISUAL, then $EDITOR, then fallbacks
+        const editor = std.posix.getenv("VISUAL") orelse
+            std.posix.getenv("EDITOR") orelse
+            "nano"; // Common default
+
+        // Check if editor is a terminal-based one that needs a terminal emulator
+        const needs_terminal = std.mem.eql(u8, editor, "nano") or
+            std.mem.eql(u8, editor, "vim") or
+            std.mem.eql(u8, editor, "vi") or
+            std.mem.eql(u8, editor, "nvim") or
+            std.mem.eql(u8, editor, "emacs") or
+            std.mem.eql(u8, editor, "micro");
+
+        if (needs_terminal) {
+            // Try to find a terminal emulator
+            const terminals = [_][]const u8{ "x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm" };
+            for (terminals) |term| {
+                // gnome-terminal uses -- to separate its args
+                if (std.mem.eql(u8, term, "gnome-terminal")) {
+                    var child = std.process.Child.init(&[_][]const u8{ term, "--", editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+                    if (child.spawn()) |_| return else |_| continue;
+                } else {
+                    var child = std.process.Child.init(&[_][]const u8{ term, "-e", editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+                    if (child.spawn()) |_| return else |_| continue;
+                }
+            }
+        }
+
+        // Try editor directly (for GUI editors like code, gedit, kate)
+        var child = std.process.Child.init(&[_][]const u8{ editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+        _ = child.spawn() catch {
+            // Last resort: xdg-open
+            var fallback = std.process.Child.init(&[_][]const u8{ "xdg-open", path_z[0..path.len :0] }, std.heap.c_allocator);
+            _ = fallback.spawn() catch return;
+        };
     }
 
     fn onQuit(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {

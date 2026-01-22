@@ -234,13 +234,14 @@ const LinuxTray = struct {
         const menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
 
         // Hotkey display (disabled item showing current hotkey)
-        var hotkey_label_buf: [64]u8 = undefined;
+        var hotkey_label_buf: [128]u8 = undefined;
         const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
         defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
         const hotkey_label = std.fmt.bufPrint(&hotkey_label_buf, "Hotkey: {s}", .{hotkey_str}) catch "Hotkey: Ctrl+Shift+Space";
-        var hotkey_label_z: [64:0]u8 = undefined;
-        @memcpy(hotkey_label_z[0..hotkey_label.len], hotkey_label);
-        hotkey_label_z[hotkey_label.len] = 0;
+        const hotkey_len = @min(hotkey_label.len, 126);
+        var hotkey_label_z: [128:0]u8 = undefined;
+        @memcpy(hotkey_label_z[0..hotkey_len], hotkey_label[0..hotkey_len]);
+        hotkey_label_z[hotkey_len] = 0;
         const hotkey_item = gtk.gtk_menu_item_new_with_label(&hotkey_label_z);
         gtk.gtk_widget_set_sensitive(hotkey_item, 0); // Disabled - just for display
         gtk.gtk_menu_shell_append(@ptrCast(menu), hotkey_item);
@@ -272,7 +273,7 @@ const LinuxTray = struct {
         // Add model options
         const models = [_]config.Config.Model{ .tiny, .base, .small, .medium, .large };
         for (models) |model| {
-            var label_buf: [64]u8 = undefined;
+            var label_buf: [128]u8 = undefined;
             const display = model.displayName();
 
             // Check if model exists
@@ -284,9 +285,10 @@ const LinuxTray = struct {
             else
                 std.fmt.bufPrint(&label_buf, "  {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch display;
 
-            var label_z: [64:0]u8 = undefined;
-            @memcpy(label_z[0..label.len], label);
-            label_z[label.len] = 0;
+            const label_len = @min(label.len, 126);
+            var label_z: [128:0]u8 = undefined;
+            @memcpy(label_z[0..label_len], label[0..label_len]);
+            label_z[label_len] = 0;
 
             const item = gtk.gtk_menu_item_new_with_label(&label_z);
             // Store model index as user data
@@ -303,7 +305,7 @@ const LinuxTray = struct {
 
         const languages = [_]config.Config.Language{ .english, .multilingual };
         for (languages) |language| {
-            var label_buf: [64]u8 = undefined;
+            var label_buf: [128]u8 = undefined;
             const display = language.displayName();
 
             const label = if (cfg.language == language)
@@ -311,9 +313,10 @@ const LinuxTray = struct {
             else
                 std.fmt.bufPrint(&label_buf, "  {s}", .{display}) catch display;
 
-            var label_z: [64:0]u8 = undefined;
-            @memcpy(label_z[0..label.len], label);
-            label_z[label.len] = 0;
+            const label_len = @min(label.len, 126);
+            var label_z: [128:0]u8 = undefined;
+            @memcpy(label_z[0..label_len], label[0..label_len]);
+            label_z[label_len] = 0;
 
             const item = gtk.gtk_menu_item_new_with_label(&label_z);
             _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onLanguageSelect), @ptrFromInt(@intFromEnum(language)), null, 0);
@@ -347,11 +350,13 @@ const LinuxTray = struct {
             if (recent[i]) |text| {
                 has_recent = true;
                 // Truncate to first 30 chars + ...
-                var label_buf: [40]u8 = undefined;
+                var label_buf: [64:0]u8 = undefined;
                 const display_len = @min(text.len, 30);
                 @memcpy(label_buf[0..display_len], text[0..display_len]);
                 if (text.len > 30) {
-                    @memcpy(label_buf[display_len..][0..3], "...");
+                    label_buf[display_len] = '.';
+                    label_buf[display_len + 1] = '.';
+                    label_buf[display_len + 2] = '.';
                     label_buf[display_len + 3] = 0;
                 } else {
                     label_buf[display_len] = 0;
@@ -452,11 +457,12 @@ const LinuxTray = struct {
             // Update tooltip to show downloading
             if (tray_instance) |*inst| {
                 if (inst.status_icon) |icon| {
-                    var msg_buf: [64]u8 = undefined;
+                    var msg_buf: [128]u8 = undefined;
                     const msg = std.fmt.bufPrint(&msg_buf, "Downloading {s}...", .{model.displayName()}) catch "Downloading...";
-                    var msg_z: [64:0]u8 = undefined;
-                    @memcpy(msg_z[0..msg.len], msg);
-                    msg_z[msg.len] = 0;
+                    const msg_len = @min(msg.len, 126);
+                    var msg_z: [128:0]u8 = undefined;
+                    @memcpy(msg_z[0..msg_len], msg[0..msg_len]);
+                    msg_z[msg_len] = 0;
                     gtk.gtk_status_icon_set_tooltip_text(icon, &msg_z);
                 }
             }

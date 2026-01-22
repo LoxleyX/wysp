@@ -350,19 +350,23 @@ const LinuxTray = struct {
             if (recent[i]) |text| {
                 has_recent = true;
                 // Truncate to first 30 chars + ...
-                var label_buf: [64:0]u8 = undefined;
-                const display_len = @min(text.len, 30);
-                @memcpy(label_buf[0..display_len], text[0..display_len]);
-                if (text.len > 30) {
+                var label_buf: [48]u8 = [_]u8{0} ** 48;
+                const max_display: usize = 30;
+                const display_len: usize = if (text.len < max_display) text.len else max_display;
+
+                var j: usize = 0;
+                while (j < display_len) : (j += 1) {
+                    label_buf[j] = text[j];
+                }
+
+                if (text.len > max_display) {
                     label_buf[display_len] = '.';
                     label_buf[display_len + 1] = '.';
                     label_buf[display_len + 2] = '.';
-                    label_buf[display_len + 3] = 0;
-                } else {
-                    label_buf[display_len] = 0;
                 }
+                // Buffer is already zero-initialized, no need to set null terminator
 
-                const item = gtk.gtk_menu_item_new_with_label(&label_buf);
+                const item = gtk.gtk_menu_item_new_with_label(@ptrCast(&label_buf));
                 // Store the full text pointer as user data
                 _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onRecentClick), @constCast(@ptrCast(text.ptr)), null, 0);
                 gtk.gtk_menu_shell_append(@ptrCast(recent_menu), item);

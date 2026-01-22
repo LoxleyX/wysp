@@ -148,9 +148,28 @@ Wysp stores its configuration in `~/.wysp/config.json`. You can edit this file d
 ```json
 {
   "hotkey": "Ctrl+Shift+Space",
-  "toggle_mode": false
+  "toggle_mode": false,
+  "model": "base",
+  "language": "english"
 }
 ```
+
+### Model Selection
+
+Select your whisper model from the tray menu. If the model isn't downloaded yet, Wysp will automatically download it.
+
+| Model | Size | Speed | Accuracy |
+|-------|------|-------|----------|
+| tiny | ~75MB | Fastest | Basic |
+| base | ~150MB | Fast | Good |
+| small | ~500MB | Medium | Better |
+| medium | ~1.5GB | Slow | Great |
+| large | ~3GB | Slowest | Best |
+
+### Language Selection
+
+- **English** — Uses English-optimized models (`.en` suffix). Faster and more accurate for English.
+- **Multilingual** — Uses general models that support 99+ languages. Wysp auto-detects the language.
 
 ### Changing the Hotkey
 

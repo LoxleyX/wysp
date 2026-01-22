@@ -8,6 +8,87 @@ const builtin = @import("builtin");
 pub const Config = struct {
     hotkey: Hotkey = .{},
     toggle_mode: bool = false,
+    model: Model = .base,
+    language: Language = .english,
+
+    pub const Model = enum {
+        tiny,
+        base,
+        small,
+        medium,
+        large,
+
+        pub fn displayName(self: Model) []const u8 {
+            return switch (self) {
+                .tiny => "Tiny (~75MB)",
+                .base => "Base (~150MB)",
+                .small => "Small (~500MB)",
+                .medium => "Medium (~1.5GB)",
+                .large => "Large (~3GB)",
+            };
+        }
+
+        pub fn fileName(self: Model, lang: Language) []const u8 {
+            return switch (self) {
+                .tiny => if (lang == .english) "ggml-tiny.en.bin" else "ggml-tiny.bin",
+                .base => if (lang == .english) "ggml-base.en.bin" else "ggml-base.bin",
+                .small => if (lang == .english) "ggml-small.en.bin" else "ggml-small.bin",
+                .medium => if (lang == .english) "ggml-medium.en.bin" else "ggml-medium.bin",
+                .large => "ggml-large-v3.bin", // No .en version for large
+            };
+        }
+
+        pub fn fromString(str: []const u8) ?Model {
+            if (std.mem.eql(u8, str, "tiny")) return .tiny;
+            if (std.mem.eql(u8, str, "base")) return .base;
+            if (std.mem.eql(u8, str, "small")) return .small;
+            if (std.mem.eql(u8, str, "medium")) return .medium;
+            if (std.mem.eql(u8, str, "large")) return .large;
+            return null;
+        }
+
+        pub fn toString(self: Model) []const u8 {
+            return switch (self) {
+                .tiny => "tiny",
+                .base => "base",
+                .small => "small",
+                .medium => "medium",
+                .large => "large",
+            };
+        }
+    };
+
+    pub const Language = enum {
+        english,
+        multilingual,
+
+        pub fn displayName(self: Language) []const u8 {
+            return switch (self) {
+                .english => "English (faster)",
+                .multilingual => "Multilingual",
+            };
+        }
+
+        pub fn whisperCode(self: Language) []const u8 {
+            return switch (self) {
+                .english => "en",
+                .multilingual => "auto",
+            };
+        }
+
+        pub fn fromString(str: []const u8) ?Language {
+            if (std.mem.eql(u8, str, "english") or std.mem.eql(u8, str, "en")) return .english;
+            if (std.mem.eql(u8, str, "multilingual") or std.mem.eql(u8, str, "auto")) return .multilingual;
+            return null;
+        }
+
+        pub fn toString(self: Language) []const u8 {
+            return switch (self) {
+                .english => "english",
+                .multilingual => "multilingual",
+            };
+        }
+    };
 
     pub const Hotkey = struct {
         // Modifiers
@@ -143,27 +224,44 @@ pub const Config = struct {
         try file.writer().print(
             \\{{
             \\  "hotkey": "{s}",
-            \\  "toggle_mode": {s}
+            \\  "toggle_mode": {s},
+            \\  "model": "{s}",
+            \\  "language": "{s}"
             \\}}
             \\
-        , .{ hotkey_str, if (self.toggle_mode) "true" else "false" });
+        , .{
+            hotkey_str,
+            if (self.toggle_mode) "true" else "false",
+            self.model.toString(),
+            self.language.toString(),
+        });
     }
 
     fn parseJson(allocator: std.mem.Allocator, content: []const u8) !Self {
-        var config = Self{};
+        var cfg = Self{};
 
         // Simple JSON parsing for our specific format
         if (std.mem.indexOf(u8, content, "\"hotkey\"")) |_| {
             if (extractStringValue(content, "hotkey")) |hotkey_str| {
-                config.hotkey = Hotkey.parse(allocator, hotkey_str) catch .{};
+                cfg.hotkey = Hotkey.parse(allocator, hotkey_str) catch .{};
             }
         }
 
-        if (std.mem.indexOf(u8, content, "\"toggle_mode\"")) |_| {
-            config.toggle_mode = std.mem.indexOf(u8, content, "true") != null;
+        if (extractStringValue(content, "toggle_mode")) |val| {
+            cfg.toggle_mode = std.mem.eql(u8, val, "true");
+        } else if (std.mem.indexOf(u8, content, "\"toggle_mode\": true")) |_| {
+            cfg.toggle_mode = true;
         }
 
-        return config;
+        if (extractStringValue(content, "model")) |model_str| {
+            cfg.model = Model.fromString(model_str) orelse .base;
+        }
+
+        if (extractStringValue(content, "language")) |lang_str| {
+            cfg.language = Language.fromString(lang_str) orelse .english;
+        }
+
+        return cfg;
     }
 
     fn extractStringValue(content: []const u8, key: []const u8) ?[]const u8 {
@@ -196,6 +294,48 @@ pub const Config = struct {
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         self.hotkey.deinit(allocator);
+    }
+
+    /// Get the full path to the configured model file
+    pub fn getModelPath(self: Self, allocator: std.mem.Allocator) ![]const u8 {
+        const home = std.posix.getenv("HOME") orelse return error.NoHomeDir;
+        const filename = self.model.fileName(self.language);
+        return std.fmt.allocPrint(allocator, "{s}/.wysp/models/{s}", .{ home, filename });
+    }
+
+    /// Check if the configured model exists
+    pub fn modelExists(self: Self, allocator: std.mem.Allocator) bool {
+        const path = self.getModelPath(allocator) catch return false;
+        defer allocator.free(path);
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
+    }
+
+    /// Get URL for downloading the model
+    pub fn getModelUrl(self: Self) []const u8 {
+        const filename = self.model.fileName(self.language);
+        // Construct URL at comptime isn't possible with runtime values,
+        // so we return the filename and construct URL elsewhere
+        _ = filename;
+        return switch (self.model) {
+            .tiny => if (self.language == .english)
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+            else
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+            .base => if (self.language == .english)
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+            else
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+            .small => if (self.language == .english)
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
+            else
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            .medium => if (self.language == .english)
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin"
+            else
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+            .large => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+        };
     }
 };
 

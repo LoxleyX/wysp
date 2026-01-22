@@ -69,6 +69,7 @@ const LinuxTray = struct {
 
     const Self = @This();
     const overlay = @import("overlay.zig");
+    const config = @import("config.zig");
 
     const gtk = @cImport({
         @cInclude("gtk/gtk.h");
@@ -261,6 +262,77 @@ const LinuxTray = struct {
         // Separator
         gtk.gtk_menu_shell_append(@ptrCast(menu), gtk.gtk_separator_menu_item_new());
 
+        // Model selector submenu
+        const cfg = main.getConfig();
+        const download = @import("download.zig");
+
+        const model_item = gtk.gtk_menu_item_new_with_label("Model");
+        const model_menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
+
+        // Add model options
+        const models = [_]config.Config.Model{ .tiny, .base, .small, .medium, .large };
+        for (models) |model| {
+            var label_buf: [64]u8 = undefined;
+            const display = model.displayName();
+
+            // Check if model exists
+            var test_cfg = config.Config{ .model = model, .language = cfg.language };
+            const exists = test_cfg.modelExists(std.heap.c_allocator);
+
+            const label = if (cfg.model == model)
+                std.fmt.bufPrint(&label_buf, "* {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch display
+            else
+                std.fmt.bufPrint(&label_buf, "  {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch display;
+
+            var label_z: [64:0]u8 = undefined;
+            @memcpy(label_z[0..label.len], label);
+            label_z[label.len] = 0;
+
+            const item = gtk.gtk_menu_item_new_with_label(&label_z);
+            // Store model index as user data
+            _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onModelSelect), @ptrFromInt(@intFromEnum(model)), null, 0);
+            gtk.gtk_menu_shell_append(@ptrCast(model_menu), item);
+        }
+
+        gtk.gtk_menu_item_set_submenu(@ptrCast(model_item), @ptrCast(model_menu));
+        gtk.gtk_menu_shell_append(@ptrCast(menu), model_item);
+
+        // Language selector submenu
+        const lang_item = gtk.gtk_menu_item_new_with_label("Language");
+        const lang_menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
+
+        const languages = [_]config.Config.Language{ .english, .multilingual };
+        for (languages) |language| {
+            var label_buf: [64]u8 = undefined;
+            const display = language.displayName();
+
+            const label = if (cfg.language == language)
+                std.fmt.bufPrint(&label_buf, "* {s}", .{display}) catch display
+            else
+                std.fmt.bufPrint(&label_buf, "  {s}", .{display}) catch display;
+
+            var label_z: [64:0]u8 = undefined;
+            @memcpy(label_z[0..label.len], label);
+            label_z[label.len] = 0;
+
+            const item = gtk.gtk_menu_item_new_with_label(&label_z);
+            _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onLanguageSelect), @ptrFromInt(@intFromEnum(language)), null, 0);
+            gtk.gtk_menu_shell_append(@ptrCast(lang_menu), item);
+        }
+
+        gtk.gtk_menu_item_set_submenu(@ptrCast(lang_item), @ptrCast(lang_menu));
+        gtk.gtk_menu_shell_append(@ptrCast(menu), lang_item);
+
+        // Show download status if downloading
+        if (download.isDownloading()) {
+            const downloading_item = gtk.gtk_menu_item_new_with_label("Downloading model...");
+            gtk.gtk_widget_set_sensitive(downloading_item, 0);
+            gtk.gtk_menu_shell_append(@ptrCast(menu), downloading_item);
+        }
+
+        // Separator
+        gtk.gtk_menu_shell_append(@ptrCast(menu), gtk.gtk_separator_menu_item_new());
+
         // Recent transcriptions submenu
         const recent_item = gtk.gtk_menu_item_new_with_label("Recent Transcriptions");
         const recent_menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
@@ -360,9 +432,64 @@ const LinuxTray = struct {
         main.clearRecentTranscriptions();
     }
 
-    fn onEditConfig(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {
-        const config = @import("config.zig");
+    fn onModelSelect(_: *gtk.GtkMenuItem, user_data: ?*anyopaque) callconv(.C) void {
+        const main = @import("main.zig");
+        const download = @import("download.zig");
 
+        const model_int: usize = @intFromPtr(user_data);
+        const model: config.Config.Model = @enumFromInt(model_int);
+
+        // Update config
+        var cfg = main.getConfig();
+        cfg.model = model;
+        cfg.save(std.heap.c_allocator) catch {};
+        main.setConfig(cfg);
+
+        // Check if model exists, if not, download it
+        if (!cfg.modelExists(std.heap.c_allocator)) {
+            download.startDownload(model, cfg.language) catch {};
+
+            // Update tooltip to show downloading
+            if (tray_instance) |*inst| {
+                if (inst.status_icon) |icon| {
+                    var msg_buf: [64]u8 = undefined;
+                    const msg = std.fmt.bufPrint(&msg_buf, "Downloading {s}...", .{model.displayName()}) catch "Downloading...";
+                    var msg_z: [64:0]u8 = undefined;
+                    @memcpy(msg_z[0..msg.len], msg);
+                    msg_z[msg.len] = 0;
+                    gtk.gtk_status_icon_set_tooltip_text(icon, &msg_z);
+                }
+            }
+        }
+    }
+
+    fn onLanguageSelect(_: *gtk.GtkMenuItem, user_data: ?*anyopaque) callconv(.C) void {
+        const main = @import("main.zig");
+        const download = @import("download.zig");
+
+        const lang_int: usize = @intFromPtr(user_data);
+        const language: config.Config.Language = @enumFromInt(lang_int);
+
+        // Update config
+        var cfg = main.getConfig();
+        cfg.language = language;
+        cfg.save(std.heap.c_allocator) catch {};
+        main.setConfig(cfg);
+
+        // Check if model exists with new language, if not, download it
+        if (!cfg.modelExists(std.heap.c_allocator)) {
+            download.startDownload(cfg.model, language) catch {};
+
+            // Update tooltip to show downloading
+            if (tray_instance) |*inst| {
+                if (inst.status_icon) |icon| {
+                    gtk.gtk_status_icon_set_tooltip_text(icon, "Downloading model...");
+                }
+            }
+        }
+    }
+
+    fn onEditConfig(_: *gtk.GtkMenuItem, _: ?*anyopaque) callconv(.C) void {
         // Ensure config file exists with defaults
         var cfg = config.Config.load(std.heap.c_allocator) catch config.Config{};
         cfg.save(std.heap.c_allocator) catch {};

@@ -44,13 +44,25 @@ pub const Whisper = struct {
 
     /// Transcribe audio samples to text
     /// Audio must be 16kHz mono float32
+    /// language: "en" for English, "auto" for auto-detect (multilingual models)
     pub fn transcribe(self: *Self, audio: []const f32) ![]const u8 {
+        return self.transcribeWithLanguage(audio, "en");
+    }
+
+    /// Transcribe with specific language setting
+    pub fn transcribeWithLanguage(self: *Self, audio: []const f32, language: []const u8) ![]const u8 {
         var params = c.whisper_full_default_params(c.WHISPER_SAMPLING_GREEDY);
         params.print_progress = false;
         params.print_special = false;
         params.print_realtime = false;
         params.print_timestamps = false;
-        params.language = "en";
+
+        // Set language (need null-terminated string)
+        var lang_buf: [8:0]u8 = undefined;
+        const lang_len = @min(language.len, 7);
+        @memcpy(lang_buf[0..lang_len], language[0..lang_len]);
+        lang_buf[lang_len] = 0;
+        params.language = &lang_buf;
 
         // Speed optimizations
         params.single_segment = false; // Allow segmentation for better accuracy
@@ -95,24 +107,52 @@ pub const Whisper = struct {
     }
 };
 
+const config = @import("config.zig");
+
+/// Find model based on config, fallback to defaults
+pub fn findModel(allocator: std.mem.Allocator, cfg: config.Config) ?[]const u8 {
+    // First try the configured model
+    const configured_path = cfg.getModelPath(allocator) catch null;
+    if (configured_path) |path| {
+        if (std.fs.accessAbsolute(path, .{})) |_| {
+            return path;
+        } else |_| {
+            allocator.free(path);
+        }
+    }
+
+    // Fallback to any available model
+    return findDefaultModel(allocator);
+}
+
 /// Find default model in ~/.ziew/models/ or ~/.wysp/models/
 pub fn findDefaultModel(allocator: std.mem.Allocator) ?[]const u8 {
     const home = std.posix.getenv("HOME") orelse return null;
 
     // Try ~/.ziew/models/ first (shared with ziew)
     const ziew_path = std.fmt.allocPrint(allocator, "{s}/.ziew/models/whisper-base-en.bin", .{home}) catch return null;
-    if (std.fs.cwd().access(ziew_path, .{})) |_| {
+    if (std.fs.accessAbsolute(ziew_path, .{})) |_| {
         return ziew_path;
     } else |_| {
         allocator.free(ziew_path);
     }
 
-    // Try ~/.wysp/models/
-    const wysp_path = std.fmt.allocPrint(allocator, "{s}/.wysp/models/ggml-base.en.bin", .{home}) catch return null;
-    if (std.fs.cwd().access(wysp_path, .{})) |_| {
-        return wysp_path;
-    } else |_| {
-        allocator.free(wysp_path);
+    // Try common model names in ~/.wysp/models/
+    const model_names = [_][]const u8{
+        "ggml-base.en.bin",
+        "ggml-tiny.en.bin",
+        "ggml-small.en.bin",
+        "ggml-base.bin",
+        "ggml-tiny.bin",
+    };
+
+    for (model_names) |name| {
+        const wysp_path = std.fmt.allocPrint(allocator, "{s}/.wysp/models/{s}", .{ home, name }) catch continue;
+        if (std.fs.accessAbsolute(wysp_path, .{})) |_| {
+            return wysp_path;
+        } else |_| {
+            allocator.free(wysp_path);
+        }
     }
 
     return null;

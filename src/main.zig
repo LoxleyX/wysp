@@ -101,8 +101,9 @@ fn stopRecordingAndTranscribe() void {
         return;
     }
 
-    // Transcribe
-    const text = stt.transcribe(samples) catch {
+    // Transcribe with configured language
+    const lang_code = g_config.language.whisperCode();
+    const text = stt.transcribeWithLanguage(samples, lang_code) catch {
         overlay.hide();
         return;
     };
@@ -156,6 +157,14 @@ pub fn getHotkeyString() ?[]const u8 {
     return g_config.hotkey.format(g_allocator) catch null;
 }
 
+pub fn getConfig() config.Config {
+    return g_config;
+}
+
+pub fn setConfig(cfg: config.Config) void {
+    g_config = cfg;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -168,10 +177,10 @@ pub fn main() !void {
     g_config = config.Config.load(allocator) catch .{};
     g_toggle_mode = g_config.toggle_mode;
 
-    // Find and load whisper model (suppress stdout during load)
-    const model_path = whisper.findDefaultModel(allocator) orelse {
+    // Find and load whisper model based on config
+    const model_path = whisper.findModel(allocator, g_config) orelse {
         try stderr.print("Error: No whisper model found.\n", .{});
-        try stderr.print("Download a model to ~/.ziew/models/ or ~/.wysp/models/\n", .{});
+        try stderr.print("Download a model from the tray menu or manually to ~/.wysp/models/\n", .{});
         return;
     };
     defer allocator.free(model_path);

@@ -22,6 +22,28 @@
 
 ---
 
+## Installation
+
+### Linux (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LoxleyX/wysp/main/scripts/install.sh | sh
+```
+
+Or download from [Releases](https://github.com/LoxleyX/wysp/releases):
+- `wysp-linux-x86_64.tar.gz` — Binary tarball
+- `wysp_*_amd64.deb` — Debian/Ubuntu package
+
+### Windows
+
+Download `wysp-windows-x86_64.zip` from [Releases](https://github.com/LoxleyX/wysp/releases) and extract to a folder of your choice.
+
+### From Source
+
+See [Building](#building) below.
+
+---
+
 ## Features
 
 - **Completely Local** — Uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for on-device speech recognition. Your voice never leaves your machine.
@@ -47,14 +69,20 @@ You can verify this yourself or run Wysp with your network disabled.
 
 ## Requirements
 
+### Windows
+
+No additional dependencies required. Just download and run.
+
+Configuration is stored in `%USERPROFILE%\.wysp\config.json`.
+
 ### Linux (X11)
 
 ```bash
 # Debian/Ubuntu
-sudo apt install libgtk-3-dev libx11-dev libxtst-dev
+sudo apt install libgtk-3-0 libx11-6 libxtst6
 
 # Fedora
-sudo dnf install gtk3-devel libX11-devel libXtst-devel
+sudo dnf install gtk3 libX11 libXtst
 ```
 
 ### Linux (Wayland)
@@ -74,19 +102,26 @@ sudo apt install ydotool
 
 ### Whisper Model
 
-Download a whisper.cpp compatible model:
+Wysp will prompt you to download a model on first run, or you can select one from the tray menu.
+
+Models are stored in:
+- **Linux**: `~/.wysp/models/`
+- **Windows**: `%USERPROFILE%\.wysp\models\`
+
+To download manually:
 
 ```bash
-# Create models directory
+# Linux
 mkdir -p ~/.wysp/models
-
-# Download base.en model (~150MB, good balance of speed/accuracy)
 curl -L -o ~/.wysp/models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+```
 
-# Or tiny.en for faster transcription (~75MB, less accurate)
-curl -L -o ~/.wysp/models/ggml-tiny.en.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+```powershell
+# Windows (PowerShell)
+mkdir "$env:USERPROFILE\.wysp\models" -Force
+Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" `
+  -OutFile "$env:USERPROFILE\.wysp\models\ggml-base.en.bin"
 ```
 
 ### Whisper.cpp Libraries
@@ -111,12 +146,18 @@ If you have [ziew](https://github.com/anthropics/ziew) installed, Wysp will use 
 Requires [Zig](https://ziglang.org/download/) (0.13.0 or later):
 
 ```bash
-git clone https://github.com/anthropics/wysp
+git clone https://github.com/LoxleyX/wysp
 cd wysp
 zig build
 ```
 
 The binary will be at `./zig-out/bin/wysp`.
+
+For building on Linux, you'll also need development headers:
+```bash
+# Debian/Ubuntu
+sudo apt install libgtk-3-dev libx11-dev libxtst-dev
+```
 
 ## Usage
 
@@ -143,7 +184,11 @@ The tray menu shows your last 10 transcriptions. Click any entry to copy it to y
 
 ## Configuration
 
-Wysp stores its configuration in `~/.wysp/config.json`. You can edit this file directly or use the "Edit Config" option in the tray menu.
+Wysp stores its configuration in:
+- **Linux**: `~/.wysp/config.json`
+- **Windows**: `%USERPROFILE%\.wysp\config.json`
+
+You can edit this file directly or use the "Edit Config" option in the tray menu.
 
 ```json
 {
@@ -198,8 +243,11 @@ Examples:
 
 ## Custom Icons
 
-Place custom icons in the wysp directory:
+Place custom icons in the wysp config directory:
+- **Linux**: `~/.wysp/`
+- **Windows**: `%USERPROFILE%\.wysp\`
 
+Files:
 - `logo.png` — Idle state icon
 - `logo-recording.png` — Recording state icon (red recommended)
 
@@ -209,15 +257,16 @@ Place custom icons in the wysp directory:
 |----------|--------|----------------|-----------|
 | Linux X11 | XGrabKey | XTest | GTK StatusIcon |
 | Linux Wayland | evdev | wtype/ydotool | GTK StatusIcon |
-| Windows | Low-level hook | SendInput | Shell_NotifyIcon |
+| Windows | Low-level keyboard hook | SendInput | Shell_NotifyIcon |
 
-Windows support is implemented but untested. Requires building whisper.cpp for Windows.
+Pre-built binaries are available for Linux (x86_64) and Windows (x86_64).
 
 ## Troubleshooting
 
 ### Hotkey not working
 
-- **X11**: Another application may have grabbed your hotkey. Try a different key combination in `~/.wysp/config.json`.
+- **Windows**: Try running as administrator, or use a different hotkey combination.
+- **X11**: Another application may have grabbed your hotkey. Try a different key combination.
 - **Wayland**: Ensure you're in the `input` group and have logged out/in.
 - **Invalid key**: Check that your hotkey uses supported modifiers and keys (see Configuration section).
 
@@ -242,18 +291,22 @@ Windows support is implemented but untested. Requires building whisper.cpp for W
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │   Hotkey    │────▶│   Audio     │────▶│  Whisper    │
-│  (X11/evdev)│     │ (miniaudio) │     │   (STT)     │
+│             │     │ (miniaudio) │     │   (STT)     │
 └─────────────┘     └─────────────┘     └─────────────┘
                                               │
 ┌─────────────┐     ┌─────────────┐           │
 │ System Tray │◀────│   Overlay   │◀──────────┘
-│   (GTK)     │     │   (GTK)     │           │
+│             │     │             │           │
 └─────────────┘     └─────────────┘           ▼
                                         ┌─────────────┐
                                         │ Text Inject │
-                                        │  (XTest)    │
+                                        │             │
                                         └─────────────┘
 ```
+
+Platform-specific implementations:
+- **Linux**: X11/evdev hotkeys, GTK tray/overlay, XTest injection
+- **Windows**: Low-level hooks, Shell_NotifyIcon tray, SendInput injection
 
 ## License
 

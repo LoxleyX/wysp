@@ -135,14 +135,11 @@ const LinuxTray = struct {
 
         // Set tooltip with configured hotkey
         const main = @import("main.zig");
-        var tooltip_buf: [128]u8 = undefined;
+        var tooltip_buf: [128]u8 = [_]u8{0} ** 128;
         const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
         defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
-        const tooltip = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch "Wysp";
-        var tooltip_z: [128:0]u8 = undefined;
-        @memcpy(tooltip_z[0..tooltip.len], tooltip);
-        tooltip_z[tooltip.len] = 0;
-        gtk.gtk_status_icon_set_tooltip_text(status_icon, &tooltip_z);
+        _ = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch {};
+        gtk.gtk_status_icon_set_tooltip_text(status_icon, @ptrCast(&tooltip_buf));
         gtk.gtk_status_icon_set_visible(status_icon, 1);
 
         _ = gtk.g_signal_connect_data(
@@ -204,14 +201,11 @@ const LinuxTray = struct {
                 }
                 // Set tooltip with configured hotkey
                 const main = @import("main.zig");
-                var tooltip_buf: [128]u8 = undefined;
+                var tooltip_buf: [128]u8 = [_]u8{0} ** 128;
                 const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
                 defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
-                const tooltip = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch "Wysp";
-                var tooltip_z: [128:0]u8 = undefined;
-                @memcpy(tooltip_z[0..tooltip.len], tooltip);
-                tooltip_z[tooltip.len] = 0;
-                gtk.gtk_status_icon_set_tooltip_text(icon, &tooltip_z);
+                _ = std.fmt.bufPrint(&tooltip_buf, "Wysp - Hold {s} to record", .{hotkey_str}) catch {};
+                gtk.gtk_status_icon_set_tooltip_text(icon, @ptrCast(&tooltip_buf));
             }
         }
     }
@@ -234,15 +228,11 @@ const LinuxTray = struct {
         const menu: *gtk.GtkMenu = @ptrCast(gtk.gtk_menu_new());
 
         // Hotkey display (disabled item showing current hotkey)
-        var hotkey_label_buf: [128]u8 = undefined;
+        var hotkey_label_buf: [128]u8 = [_]u8{0} ** 128;
         const hotkey_str = main.getHotkeyString() orelse "Ctrl+Shift+Space";
         defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) std.heap.c_allocator.free(@constCast(hotkey_str));
-        const hotkey_label = std.fmt.bufPrint(&hotkey_label_buf, "Hotkey: {s}", .{hotkey_str}) catch "Hotkey: Ctrl+Shift+Space";
-        const hotkey_len = @min(hotkey_label.len, 126);
-        var hotkey_label_z: [128:0]u8 = undefined;
-        @memcpy(hotkey_label_z[0..hotkey_len], hotkey_label[0..hotkey_len]);
-        hotkey_label_z[hotkey_len] = 0;
-        const hotkey_item = gtk.gtk_menu_item_new_with_label(&hotkey_label_z);
+        _ = std.fmt.bufPrint(&hotkey_label_buf, "Hotkey: {s}", .{hotkey_str}) catch {};
+        const hotkey_item = gtk.gtk_menu_item_new_with_label(@ptrCast(&hotkey_label_buf));
         gtk.gtk_widget_set_sensitive(hotkey_item, 0); // Disabled - just for display
         gtk.gtk_menu_shell_append(@ptrCast(menu), hotkey_item);
 
@@ -273,24 +263,20 @@ const LinuxTray = struct {
         // Add model options
         const models = [_]config.Config.Model{ .tiny, .base, .small, .medium, .large };
         for (models) |model| {
-            var label_buf: [128]u8 = undefined;
+            var label_buf: [128]u8 = [_]u8{0} ** 128;
             const display = model.displayName();
 
             // Check if model exists
             var test_cfg = config.Config{ .model = model, .language = cfg.language };
             const exists = test_cfg.modelExists(std.heap.c_allocator);
 
-            const label = if (cfg.model == model)
-                std.fmt.bufPrint(&label_buf, "* {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch display
-            else
-                std.fmt.bufPrint(&label_buf, "  {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch display;
+            if (cfg.model == model) {
+                _ = std.fmt.bufPrint(&label_buf, "* {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch {};
+            } else {
+                _ = std.fmt.bufPrint(&label_buf, "  {s}{s}", .{ display, if (!exists) " [Download]" else "" }) catch {};
+            }
 
-            const label_len = @min(label.len, 126);
-            var label_z: [128:0]u8 = undefined;
-            @memcpy(label_z[0..label_len], label[0..label_len]);
-            label_z[label_len] = 0;
-
-            const item = gtk.gtk_menu_item_new_with_label(&label_z);
+            const item = gtk.gtk_menu_item_new_with_label(@ptrCast(&label_buf));
             // Store model index as user data
             _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onModelSelect), @ptrFromInt(@intFromEnum(model)), null, 0);
             gtk.gtk_menu_shell_append(@ptrCast(model_menu), item);
@@ -305,20 +291,16 @@ const LinuxTray = struct {
 
         const languages = [_]config.Config.Language{ .english, .multilingual };
         for (languages) |language| {
-            var label_buf: [128]u8 = undefined;
+            var label_buf: [128]u8 = [_]u8{0} ** 128;
             const display = language.displayName();
 
-            const label = if (cfg.language == language)
-                std.fmt.bufPrint(&label_buf, "* {s}", .{display}) catch display
-            else
-                std.fmt.bufPrint(&label_buf, "  {s}", .{display}) catch display;
+            if (cfg.language == language) {
+                _ = std.fmt.bufPrint(&label_buf, "* {s}", .{display}) catch {};
+            } else {
+                _ = std.fmt.bufPrint(&label_buf, "  {s}", .{display}) catch {};
+            }
 
-            const label_len = @min(label.len, 126);
-            var label_z: [128:0]u8 = undefined;
-            @memcpy(label_z[0..label_len], label[0..label_len]);
-            label_z[label_len] = 0;
-
-            const item = gtk.gtk_menu_item_new_with_label(&label_z);
+            const item = gtk.gtk_menu_item_new_with_label(@ptrCast(&label_buf));
             _ = gtk.g_signal_connect_data(@ptrCast(item), "activate", @ptrCast(&onLanguageSelect), @ptrFromInt(@intFromEnum(language)), null, 0);
             gtk.gtk_menu_shell_append(@ptrCast(lang_menu), item);
         }
@@ -461,13 +443,9 @@ const LinuxTray = struct {
             // Update tooltip to show downloading
             if (tray_instance) |*inst| {
                 if (inst.status_icon) |icon| {
-                    var msg_buf: [128]u8 = undefined;
-                    const msg = std.fmt.bufPrint(&msg_buf, "Downloading {s}...", .{model.displayName()}) catch "Downloading...";
-                    const msg_len = @min(msg.len, 126);
-                    var msg_z: [128:0]u8 = undefined;
-                    @memcpy(msg_z[0..msg_len], msg[0..msg_len]);
-                    msg_z[msg_len] = 0;
-                    gtk.gtk_status_icon_set_tooltip_text(icon, &msg_z);
+                    var msg_buf: [128]u8 = [_]u8{0} ** 128;
+                    _ = std.fmt.bufPrint(&msg_buf, "Downloading {s}...", .{model.displayName()}) catch {};
+                    gtk.gtk_status_icon_set_tooltip_text(icon, @ptrCast(&msg_buf));
                 }
             }
         }
@@ -506,11 +484,8 @@ const LinuxTray = struct {
 
         // Get config path
         const home = std.posix.getenv("HOME") orelse return;
-        var path_buf: [256]u8 = undefined;
+        var path_buf: [256]u8 = [_]u8{0} ** 256;
         const path = std.fmt.bufPrint(&path_buf, "{s}/.wysp/config.json", .{home}) catch return;
-        var path_z: [256:0]u8 = undefined;
-        @memcpy(path_z[0..path.len], path);
-        path_z[path.len] = 0;
 
         // Try $VISUAL, then $EDITOR, then fallbacks
         const editor = std.posix.getenv("VISUAL") orelse
@@ -531,20 +506,20 @@ const LinuxTray = struct {
             for (terminals) |term| {
                 // gnome-terminal uses -- to separate its args
                 if (std.mem.eql(u8, term, "gnome-terminal")) {
-                    var child = std.process.Child.init(&[_][]const u8{ term, "--", editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+                    var child = std.process.Child.init(&[_][]const u8{ term, "--", editor, path }, std.heap.c_allocator);
                     if (child.spawn()) |_| return else |_| continue;
                 } else {
-                    var child = std.process.Child.init(&[_][]const u8{ term, "-e", editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+                    var child = std.process.Child.init(&[_][]const u8{ term, "-e", editor, path }, std.heap.c_allocator);
                     if (child.spawn()) |_| return else |_| continue;
                 }
             }
         }
 
         // Try editor directly (for GUI editors like code, gedit, kate)
-        var child = std.process.Child.init(&[_][]const u8{ editor, path_z[0..path.len :0] }, std.heap.c_allocator);
+        var child = std.process.Child.init(&[_][]const u8{ editor, path }, std.heap.c_allocator);
         _ = child.spawn() catch {
             // Last resort: xdg-open
-            var fallback = std.process.Child.init(&[_][]const u8{ "xdg-open", path_z[0..path.len :0] }, std.heap.c_allocator);
+            var fallback = std.process.Child.init(&[_][]const u8{ "xdg-open", path }, std.heap.c_allocator);
             _ = fallback.spawn() catch return;
         };
     }

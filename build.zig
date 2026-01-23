@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
     // Add ziew module
     exe.root_module.addImport("ziew", ziew_dep.module("ziew"));
 
-    // Link the webview library from ziew
+    // Link the webview library from ziew (needed for @cImport paths)
     exe.linkLibrary(ziew_dep.artifact("webview"));
 
     // Add ziew's vendor include path (for whisper plugin's audio_capture.h)

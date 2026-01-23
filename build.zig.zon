@@ -3,8 +3,8 @@
     .version = "0.2.2",
     .dependencies = .{
         .ziew = .{
-            .url = "https://github.com/ziews/ziew/archive/452ce72.tar.gz",
-            .hash = "12204efd8bf4b57ea6ef7c5928524cdc34f073a26ff7ae8bb62bc12fe527479109d3",
+            .url = "https://github.com/ziews/ziew/archive/f06582e.tar.gz",
+            .hash = "1220b9af0c02c342a40d8ca3e2263833b138e43aae46e41687fc5d7267cfefa51637",
         },
     },
     .paths = .{

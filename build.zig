@@ -1,4 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+fn getEnv(allocator: std.mem.Allocator, key: []const u8) ?[]const u8 {
+    return std.process.getEnvVarOwned(allocator, key) catch null;
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -25,9 +30,9 @@ pub fn build(b: *std.Build) void {
 
     if (target_os == .linux) {
         // Whisper.cpp libraries - check env vars first (CI), then fallback to ~/.ziew/
-        const home = std.posix.getenv("HOME") orelse "/home/user";
-        const whisper_lib = std.posix.getenv("WHISPER_LIB") orelse b.fmt("{s}/.ziew/lib", .{home});
-        const whisper_include = std.posix.getenv("WHISPER_INCLUDE") orelse b.fmt("{s}/.ziew/include", .{home});
+        const home = getEnv(b.allocator, "HOME") orelse "/home/user";
+        const whisper_lib = getEnv(b.allocator, "WHISPER_LIB") orelse b.fmt("{s}/.ziew/lib", .{home});
+        const whisper_include = getEnv(b.allocator, "WHISPER_INCLUDE") orelse b.fmt("{s}/.ziew/include", .{home});
 
         exe.addLibraryPath(.{ .cwd_relative = whisper_lib });
         exe.addIncludePath(.{ .cwd_relative = whisper_include });
@@ -52,16 +57,22 @@ pub fn build(b: *std.Build) void {
         exe.addRPath(.{ .cwd_relative = whisper_lib });
     } else if (target_os == .windows) {
         // Windows libraries - check env vars for whisper location
-        if (std.posix.getenv("WHISPER_LIB")) |whisper_lib| {
+        if (getEnv(b.allocator, "WHISPER_LIB")) |whisper_lib| {
             exe.addLibraryPath(.{ .cwd_relative = whisper_lib });
         }
-        if (std.posix.getenv("WHISPER_INCLUDE")) |whisper_include| {
+        if (getEnv(b.allocator, "WHISPER_INCLUDE")) |whisper_include| {
             exe.addIncludePath(.{ .cwd_relative = whisper_include });
         }
+
+        // Whisper static libraries (built with zig cc for ABI compatibility)
         exe.linkSystemLibrary("whisper");
         exe.linkSystemLibrary("ggml");
         exe.linkSystemLibrary("ggml-base");
         exe.linkSystemLibrary("ggml-cpu");
+
+        // C++ standard library - Zig uses libc++ (LLVM)
+        // whisper.cpp built with zig c++ also uses libc++, so ABIs match
+        exe.linkLibCpp();
 
         // Windows system libraries
         exe.linkSystemLibrary("user32");

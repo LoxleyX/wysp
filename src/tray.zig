@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const utils = @import("utils.zig");
 
 pub const TrayError = error{
     InitFailed,
@@ -79,7 +80,10 @@ const LinuxTray = struct {
         overlay.initGtk();
 
         // Try to find custom logo in various locations
-        const home = std.posix.getenv("HOME") orelse "/tmp";
+        const home_alloc = utils.getHomeDir(std.heap.c_allocator);
+        const home = home_alloc orelse "/tmp";
+        defer if (home_alloc != null) std.heap.c_allocator.free(home_alloc.?);
+
         var icon_path: ?[]const u8 = null;
         var recording_icon_path: ?[]const u8 = null;
 
@@ -395,7 +399,8 @@ const LinuxTray = struct {
     }
 
     fn isAutostartEnabled() bool {
-        const home = std.posix.getenv("HOME") orelse return false;
+        const home = utils.getHomeDir(std.heap.c_allocator) orelse return false;
+        defer std.heap.c_allocator.free(home);
         var path_buf: [512]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "{s}/.config/autostart/wysp.desktop", .{home}) catch return false;
         return std.fs.cwd().access(path, .{}) != error.FileNotFound;
@@ -403,7 +408,8 @@ const LinuxTray = struct {
 
     fn onAutostartToggle(item: *gtk.GtkCheckMenuItem, _: ?*anyopaque) callconv(.C) void {
         const active = gtk.gtk_check_menu_item_get_active(item) != 0;
-        const home = std.posix.getenv("HOME") orelse return;
+        const home = utils.getHomeDir(std.heap.c_allocator) orelse return;
+        defer std.heap.c_allocator.free(home);
 
         var dir_buf: [512]u8 = undefined;
         const dir_path = std.fmt.bufPrint(&dir_buf, "{s}/.config/autostart", .{home}) catch return;
@@ -540,14 +546,17 @@ const LinuxTray = struct {
         cfg.save(std.heap.c_allocator) catch {};
 
         // Get config path
-        const home = std.posix.getenv("HOME") orelse return;
+        const home = utils.getHomeDir(std.heap.c_allocator) orelse return;
+        defer std.heap.c_allocator.free(home);
         var path_buf: [256]u8 = [_]u8{0} ** 256;
         const path = std.fmt.bufPrint(&path_buf, "{s}/.wysp/config.json", .{home}) catch return;
 
         // Try $VISUAL, then $EDITOR, then fallbacks
-        const editor = std.posix.getenv("VISUAL") orelse
-            std.posix.getenv("EDITOR") orelse
-            "nano"; // Common default
+        const visual = utils.getEnvAlloc(std.heap.c_allocator, "VISUAL");
+        defer if (visual != null) std.heap.c_allocator.free(visual.?);
+        const editor_env = utils.getEnvAlloc(std.heap.c_allocator, "EDITOR");
+        defer if (editor_env != null) std.heap.c_allocator.free(editor_env.?);
+        const editor = visual orelse editor_env orelse "nano";
 
         // Check if editor is a terminal-based one that needs a terminal emulator
         const needs_terminal = std.mem.eql(u8, editor, "nano") or

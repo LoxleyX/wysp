@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,24 +41,14 @@ jobs:
           cmake --build build -j$(nproc)
           cmake --install build
 
-          # Debug: show installed files
-          echo "=== Installed library files ==="
-          ls -la $HOME/.wysp/lib/ 2>/dev/null || ls -la $HOME/.wysp/lib64/ 2>/dev/null || echo "No lib dir"
-
       - name: Build wysp
         run: |
-          # Find where libraries were installed
           if [ -d "$HOME/.wysp/lib64" ]; then
             export WHISPER_LIB=$HOME/.wysp/lib64
           else
             export WHISPER_LIB=$HOME/.wysp/lib
           fi
           export WHISPER_INCLUDE=$HOME/.wysp/include
-
-          echo "WHISPER_LIB=$WHISPER_LIB"
-          echo "WHISPER_INCLUDE=$WHISPER_INCLUDE"
-          ls -la $WHISPER_LIB/ || echo "Cannot list lib dir"
-
           zig build -Doptimize=ReleaseFast
 
       - name: Package Linux binary
@@ -114,16 +104,136 @@ jobs:
 
           dpkg-deb --build ${PKG_DIR}
 
-      - name: Create source package
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            wysp-linux-x86_64.tar.gz
+            wysp_${{ steps.version.outputs.VERSION }}_amd64.deb
+
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
+      - name: Create Zig wrapper scripts
+        shell: pwsh
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          git archive --format=tar.gz --prefix=wysp-${VERSION}/ HEAD > wysp-${VERSION}-source.tar.gz
+          # Create wrapper scripts that CMake can use
+          $binDir = "$env:USERPROFILE\bin"
+          New-Item -ItemType Directory -Force -Path $binDir
+
+          # zig-cc.bat wrapper
+          @"
+          @echo off
+          zig cc %*
+          "@ | Out-File -FilePath "$binDir\zig-cc.bat" -Encoding ascii
+
+          # zig-c++.bat wrapper
+          @"
+          @echo off
+          zig c++ %*
+          "@ | Out-File -FilePath "$binDir\zig-cxx.bat" -Encoding ascii
+
+          # zig-ar.bat wrapper
+          @"
+          @echo off
+          zig ar %*
+          "@ | Out-File -FilePath "$binDir\zig-ar.bat" -Encoding ascii
+
+          # zig-ranlib.bat wrapper (no-op, zig ar handles indexing)
+          @"
+          @echo off
+          exit /b 0
+          "@ | Out-File -FilePath "$binDir\zig-ranlib.bat" -Encoding ascii
+
+          # Add to PATH for this session
+          echo "$binDir" >> $env:GITHUB_PATH
+
+      - name: Build whisper.cpp with Zig
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp
+          cd whisper.cpp
+
+          $binDir = "$env:USERPROFILE\bin"
+
+          # Use Zig as the compiler toolchain via wrapper scripts
+          # This ensures whisper.cpp uses libc++ (same as Zig)
+          # Disable ccache - it mangles the wrapper script quoting
+          cmake -B build -G Ninja `
+            -DCMAKE_C_COMPILER="$binDir\zig-cc.bat" `
+            -DCMAKE_CXX_COMPILER="$binDir\zig-cxx.bat" `
+            -DCMAKE_AR="$binDir\zig-ar.bat" `
+            -DCMAKE_RANLIB="$binDir\zig-ranlib.bat" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:USERPROFILE\.wysp" `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DGGML_CPU=ON `
+            -DGGML_STATIC=ON `
+            -DGGML_OPENMP=OFF `
+            -DGGML_CCACHE=OFF `
+            -DWHISPER_BUILD_EXAMPLES=OFF `
+            -DWHISPER_BUILD_TESTS=OFF
+
+          cmake --build build --parallel
+          cmake --install build
+
+          # Fix library naming - Zig expects libXXX.a format
+          cd $env:USERPROFILE\.wysp\lib
+          if (Test-Path "ggml.a") { Rename-Item "ggml.a" "libggml.a" }
+          if (Test-Path "ggml-base.a") { Rename-Item "ggml-base.a" "libggml-base.a" }
+          if (Test-Path "ggml-cpu.a") { Rename-Item "ggml-cpu.a" "libggml-cpu.a" }
+
+      - name: Build wysp
+        shell: bash
+        run: |
+          export WHISPER_LIB=$USERPROFILE/.wysp/lib
+          export WHISPER_INCLUDE=$USERPROFILE/.wysp/include
+
+          # List what we have
+          echo "=== Library directory ==="
+          ls -la $WHISPER_LIB/ || true
+
+          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: zig-out/bin/wysp.exe
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            wysp-linux-x86_64.tar.gz
-            wysp_${{ steps.version.outputs.VERSION }}_amd64.deb
-            wysp-${{ steps.version.outputs.VERSION }}-source.tar.gz
+            linux-artifacts/wysp-linux-x86_64.tar.gz
+            linux-artifacts/*.deb
+            windows-artifacts/wysp.exe
           generate_release_notes: true

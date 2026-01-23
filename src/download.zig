@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const config = @import("config.zig");
+const utils = @import("utils.zig");
 
 pub const DownloadError = error{
     CurlNotFound,
@@ -59,10 +60,11 @@ fn downloadThread(model: config.Config.Model, language: config.Config.Language) 
     const allocator = std.heap.c_allocator;
 
     // Get paths
-    const home = std.posix.getenv("HOME") orelse {
+    const home = utils.getHomeDir(allocator) orelse {
         g_state = .failed;
         return;
     };
+    defer allocator.free(home);
 
     // Ensure models directory exists
     var models_dir_buf: [256]u8 = undefined;

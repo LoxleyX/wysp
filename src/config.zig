@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const utils = @import("utils.zig");
 
 pub const Config = struct {
     hotkey: Hotkey = .{},
@@ -283,12 +284,14 @@ pub const Config = struct {
     }
 
     fn getConfigDir(allocator: std.mem.Allocator) ![]const u8 {
-        const home = std.posix.getenv("HOME") orelse std.posix.getenv("USERPROFILE") orelse return error.NoHomeDir;
+        const home = utils.getHomeDir(allocator) orelse return error.NoHomeDir;
+        defer allocator.free(home);
         return std.fmt.allocPrint(allocator, "{s}/.wysp", .{home});
     }
 
     fn getConfigPath(allocator: std.mem.Allocator) ![]const u8 {
-        const home = std.posix.getenv("HOME") orelse std.posix.getenv("USERPROFILE") orelse return error.NoHomeDir;
+        const home = utils.getHomeDir(allocator) orelse return error.NoHomeDir;
+        defer allocator.free(home);
         return std.fmt.allocPrint(allocator, "{s}/.wysp/config.json", .{home});
     }
 
@@ -298,7 +301,8 @@ pub const Config = struct {
 
     /// Get the full path to the configured model file
     pub fn getModelPath(self: Self, allocator: std.mem.Allocator) ![]const u8 {
-        const home = std.posix.getenv("HOME") orelse return error.NoHomeDir;
+        const home = utils.getHomeDir(allocator) orelse return error.NoHomeDir;
+        defer allocator.free(home);
         const filename = self.model.fileName(self.language);
         return std.fmt.allocPrint(allocator, "{s}/.wysp/models/{s}", .{ home, filename });
     }

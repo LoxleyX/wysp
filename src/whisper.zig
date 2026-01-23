@@ -3,6 +3,7 @@
 //! Audio must be 16kHz mono float32 (WHISPER_SAMPLE_RATE = 16000)
 
 const std = @import("std");
+const utils = @import("utils.zig");
 
 const c = @cImport({
     @cInclude("whisper.h");
@@ -127,7 +128,8 @@ pub fn findModel(allocator: std.mem.Allocator, cfg: config.Config) ?[]const u8 {
 
 /// Find default model in ~/.ziew/models/ or ~/.wysp/models/
 pub fn findDefaultModel(allocator: std.mem.Allocator) ?[]const u8 {
-    const home = std.posix.getenv("HOME") orelse return null;
+    const home = utils.getHomeDir(allocator) orelse return null;
+    defer allocator.free(home);
 
     // Try ~/.ziew/models/ first (shared with ziew)
     const ziew_path = std.fmt.allocPrint(allocator, "{s}/.ziew/models/whisper-base-en.bin", .{home}) catch return null;

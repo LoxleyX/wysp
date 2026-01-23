@@ -80,10 +80,10 @@ Configuration is stored in `%USERPROFILE%\.wysp\config.json`.
 
 ```bash
 # Debian/Ubuntu
-sudo apt install libgtk-3-0 libx11-6 libxtst6
+sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0 libx11-6 libxtst6
 
 # Fedora
-sudo dnf install gtk3 libX11 libXtst
+sudo dnf install gtk3 webkit2gtk4.1 libX11 libXtst
 ```
 
 ### Linux (Wayland)

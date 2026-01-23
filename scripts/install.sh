@@ -77,13 +77,29 @@ check_dependencies() {
 
     # Check for required Linux packages
     if [ "$OS" = "linux" ]; then
+        MISSING=""
+
         if ! pkg-config --exists gtk+-3.0 2>/dev/null; then
-            warn "GTK3 not found. Install with:"
-            echo "    sudo apt install libgtk-3-dev   # Debian/Ubuntu"
-            echo "    sudo dnf install gtk3-devel     # Fedora"
+            MISSING="$MISSING gtk+-3.0"
+        else
+            success "GTK3 found"
+        fi
+
+        if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+            MISSING="$MISSING webkit2gtk-4.1"
+        else
+            success "WebKit2GTK found"
+        fi
+
+        if [ -n "$MISSING" ]; then
+            warn "Missing dependencies:$MISSING"
+            echo ""
+            echo "  Install with:"
+            echo "    ${BOLD}sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0${NC}   # Debian/Ubuntu"
+            echo "    ${BOLD}sudo dnf install gtk3 webkit2gtk4.1${NC}               # Fedora"
+            echo ""
             exit 1
         fi
-        success "GTK3 found"
     fi
 }
 

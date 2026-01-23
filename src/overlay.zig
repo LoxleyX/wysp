@@ -154,25 +154,69 @@ const LinuxOverlay = struct {
         };
     }
 
-    pub fn show(self: *Self) void {
+    // Thread-safe state for GTK updates
+    var pending_show: bool = false;
+    var pending_hide: bool = false;
+    var pending_text: ?[]const u8 = null;
+
+    fn idleShowOverlay(_: ?*anyopaque) callconv(.C) c_int {
+        if (pending_show) {
+            pending_show = false;
+            if (overlay_instance) |*inst| {
+                inst.doShow();
+            }
+        }
+        return 0;
+    }
+
+    fn idleHideOverlay(_: ?*anyopaque) callconv(.C) c_int {
+        if (pending_hide) {
+            pending_hide = false;
+            if (overlay_instance) |*inst| {
+                inst.doHide();
+            }
+        }
+        return 0;
+    }
+
+    fn idleSetText(_: ?*anyopaque) callconv(.C) c_int {
+        if (pending_text) |text| {
+            pending_text = null;
+            if (overlay_instance) |*inst| {
+                inst.doSetText(text);
+            }
+        }
+        return 0;
+    }
+
+    pub fn show(_: *Self) void {
+        pending_show = true;
+        _ = gtk.g_idle_add(@ptrCast(&idleShowOverlay), null);
+    }
+
+    pub fn hide(_: *Self) void {
+        pending_hide = true;
+        _ = gtk.g_idle_add(@ptrCast(&idleHideOverlay), null);
+    }
+
+    pub fn setText(_: *Self, text: []const u8) void {
+        pending_text = text;
+        _ = gtk.g_idle_add(@ptrCast(&idleSetText), null);
+    }
+
+    fn doShow(self: *Self) void {
         if (self.window) |win| {
             gtk.gtk_widget_show_all(win);
-            while (gtk.gtk_events_pending() != 0) {
-                _ = gtk.gtk_main_iteration();
-            }
         }
     }
 
-    pub fn hide(self: *Self) void {
+    fn doHide(self: *Self) void {
         if (self.window) |win| {
             gtk.gtk_widget_hide(win);
-            while (gtk.gtk_events_pending() != 0) {
-                _ = gtk.gtk_main_iteration();
-            }
         }
     }
 
-    pub fn setText(self: *Self, text: []const u8) void {
+    fn doSetText(self: *Self, text: []const u8) void {
         if (self.label) |lbl| {
             const text_z = std.heap.c_allocator.dupeZ(u8, text) catch return;
             defer std.heap.c_allocator.free(text_z);

@@ -65,8 +65,8 @@ pub fn destroy() void {
 const LinuxTray = struct {
     status_icon: ?*gtk.GtkStatusIcon,
     menu: ?*gtk.GtkMenu,
-    icon_path: ?[]const u8,
-    recording_icon_path: ?[]const u8,
+    icon_path: ?[:0]const u8,
+    recording_icon_path: ?[:0]const u8,
 
     const Self = @This();
     const overlay = @import("overlay.zig");
@@ -76,6 +76,35 @@ const LinuxTray = struct {
         @cInclude("gtk/gtk.h");
     });
 
+    fn findIconPath(comptime name: []const u8, home: []const u8, exe_dir: ?[]const u8) ?[:0]const u8 {
+        // Check current directory
+        if (std.fs.cwd().access(name, .{})) |_| {
+            return std.heap.c_allocator.dupeZ(u8, name) catch null;
+        } else |_| {}
+
+        // Check exe directory (zig-out/bin/../../ -> project root)
+        if (exe_dir) |dir| {
+            var buf: [512]u8 = undefined;
+            const path = std.fmt.bufPrint(&buf, "{s}/../../{s}", .{ dir, name }) catch null;
+            if (path) |p| {
+                if (std.fs.accessAbsolute(p, .{})) |_| {
+                    return std.heap.c_allocator.dupeZ(u8, p) catch null;
+                } else |_| {}
+            }
+        }
+
+        // Check ~/.wysp/
+        var buf: [512]u8 = undefined;
+        const path = std.fmt.bufPrint(&buf, "{s}/.wysp/{s}", .{ home, name }) catch null;
+        if (path) |p| {
+            if (std.fs.accessAbsolute(p, .{})) |_| {
+                return std.heap.c_allocator.dupeZ(u8, p) catch null;
+            } else |_| {}
+        }
+
+        return null;
+    }
+
     pub fn init() !Self {
         overlay.initGtk();
 
@@ -84,46 +113,21 @@ const LinuxTray = struct {
         const home = home_alloc orelse "/tmp";
         defer if (home_alloc != null) std.heap.c_allocator.free(home_alloc.?);
 
-        var icon_path: ?[]const u8 = null;
-        var recording_icon_path: ?[]const u8 = null;
+        // Get executable directory
+        var exe_dir_buf: [512]u8 = undefined;
+        const exe_dir: ?[]const u8 = blk: {
+            const exe_path = std.fs.selfExePath(&exe_dir_buf) catch break :blk null;
+            break :blk std.fs.path.dirname(exe_path);
+        };
 
-        // Build paths to check
-        var home_icon_buf: [256]u8 = undefined;
-        var home_rec_buf: [256]u8 = undefined;
-
-        const home_icon = std.fmt.bufPrint(&home_icon_buf, "{s}/.wysp/logo.png", .{home}) catch null;
-        const home_rec = std.fmt.bufPrint(&home_rec_buf, "{s}/.wysp/logo-recording.png", .{home}) catch null;
-
-        // Check for logo: current dir, then ~/.wysp/
-        if (std.fs.cwd().access("logo.png", .{})) |_| {
-            icon_path = "logo.png";
-        } else |_| {
-            if (home_icon) |p| {
-                if (std.fs.cwd().access(p, .{})) |_| {
-                    icon_path = p;
-                } else |_| {}
-            }
-        }
-
-        // Check for recording logo
-        if (std.fs.cwd().access("logo-recording.png", .{})) |_| {
-            recording_icon_path = "logo-recording.png";
-        } else |_| {
-            if (home_rec) |p| {
-                if (std.fs.cwd().access(p, .{})) |_| {
-                    recording_icon_path = p;
-                } else |_| {}
-            }
-        }
+        // Find icons (allocates paths that persist)
+        const icon_path = findIconPath("logo.png", home, exe_dir);
+        const recording_icon_path = findIconPath("logo-recording.png", home, exe_dir);
 
         var status_icon: ?*gtk.GtkStatusIcon = null;
 
         if (icon_path) |path| {
-            const path_z = std.heap.c_allocator.dupeZ(u8, path) catch null;
-            if (path_z) |pz| {
-                defer std.heap.c_allocator.free(pz);
-                status_icon = gtk.gtk_status_icon_new_from_file(pz.ptr);
-            }
+            status_icon = gtk.gtk_status_icon_new_from_file(path.ptr);
         }
 
         if (status_icon == null) {
@@ -178,16 +182,31 @@ const LinuxTray = struct {
         }
     }
 
-    pub fn setRecording(self: *Self, recording: bool) void {
+    // Thread-safe recording state update using g_idle_add
+    var pending_recording_state: ?bool = null;
+
+    fn idleUpdateRecording(_: ?*anyopaque) callconv(.C) c_int {
+        if (pending_recording_state) |recording| {
+            pending_recording_state = null;
+            if (tray_instance) |*inst| {
+                inst.doSetRecording(recording);
+            }
+        }
+        return 0; // Remove from idle (G_SOURCE_REMOVE)
+    }
+
+    pub fn setRecording(_: *Self, recording: bool) void {
+        // Schedule GTK update on main thread (thread-safe)
+        pending_recording_state = recording;
+        _ = gtk.g_idle_add(@ptrCast(&idleUpdateRecording), null);
+    }
+
+    fn doSetRecording(self: *Self, recording: bool) void {
         if (self.status_icon) |icon| {
             if (recording) {
                 // Use custom recording icon if available
                 if (self.recording_icon_path) |path| {
-                    const path_z = std.heap.c_allocator.dupeZ(u8, path) catch null;
-                    if (path_z) |pz| {
-                        defer std.heap.c_allocator.free(pz);
-                        gtk.gtk_status_icon_set_from_file(icon, pz.ptr);
-                    }
+                    gtk.gtk_status_icon_set_from_file(icon, path.ptr);
                 } else {
                     gtk.gtk_status_icon_set_from_icon_name(icon, "media-record");
                 }
@@ -195,11 +214,7 @@ const LinuxTray = struct {
             } else {
                 // Use custom icon if available
                 if (self.icon_path) |path| {
-                    const path_z = std.heap.c_allocator.dupeZ(u8, path) catch null;
-                    if (path_z) |pz| {
-                        defer std.heap.c_allocator.free(pz);
-                        gtk.gtk_status_icon_set_from_file(icon, pz.ptr);
-                    }
+                    gtk.gtk_status_icon_set_from_file(icon, path.ptr);
                 } else {
                     gtk.gtk_status_icon_set_from_icon_name(icon, "audio-input-microphone");
                 }

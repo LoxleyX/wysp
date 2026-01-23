@@ -9,6 +9,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Get ziew dependency for HeadlessApp, tray, hotkeys, and whisper
+    const ziew_dep = b.dependency("ziew", .{
+        .target = target,
+        .optimize = optimize,
+        .whisper = true,
+        .hotkeys = true,
+    });
+
     const exe = b.addExecutable(.{
         .name = "wysp",
         .root_source_file = b.path("src/main.zig"),
@@ -16,7 +24,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Audio capture (C wrapper around miniaudio)
+    // Add ziew module
+    exe.root_module.addImport("ziew", ziew_dep.module("ziew"));
+
+    // Link the webview library from ziew
+    exe.linkLibrary(ziew_dep.artifact("webview"));
+
+    // Audio capture (miniaudio) - wysp's own implementation
     exe.addIncludePath(b.path("vendor"));
     exe.addCSourceFile(.{
         .file = b.path("vendor/audio_capture.c"),
@@ -55,6 +69,9 @@ pub fn build(b: *std.Build) void {
 
         // GTK for tray icon and overlay
         exe.linkSystemLibrary("gtk+-3.0");
+
+        // WebKit for webview (through ziew)
+        exe.linkSystemLibrary("webkit2gtk-4.1");
     } else if (target_os == .windows) {
         // Windows libraries - check env vars for whisper location
         if (getEnv(b.allocator, "WHISPER_LIB")) |whisper_lib| {
@@ -71,7 +88,6 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibrary("ggml-cpu");
 
         // C++ standard library - Zig uses libc++ (LLVM)
-        // whisper.cpp built with zig c++ also uses libc++, so ABIs match
         exe.linkLibCpp();
 
         // Windows system libraries

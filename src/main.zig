@@ -1,24 +1,25 @@
 //! Wysp - Local voice input tool
 //!
 //! Completely local, privacy-respecting speech-to-text.
-//! Configurable hotkey (default: Ctrl+Shift+Space) to record and transcribe.
+//! Built on Ziew's HeadlessApp with tray, hotkeys, and whisper plugins.
 
 const std = @import("std");
-const whisper = @import("whisper.zig");
-const audio = @import("audio.zig");
-const inject = @import("inject.zig");
-const hotkey = @import("hotkey.zig");
+const ziew = @import("ziew");
+const hotkeys = ziew.plugins.hotkeys;
+const whisper = ziew.plugins.whisper;
+
+// Wysp-specific implementations (keep these - they have more features than ziew's plugins)
 const tray = @import("tray.zig");
+const inject = @import("inject.zig");
 const overlay = @import("overlay.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
 
 // Global state for callbacks
-var g_capture: ?*audio.AudioCapture = null;
-var g_stt: ?*whisper.Whisper = null;
+var g_recorder: ?*whisper.Recorder = null;
 var g_injector: ?*inject.TextInjector = null;
+var g_app: ?*ziew.HeadlessApp = null;
 var g_allocator: std.mem.Allocator = undefined;
-var g_running: bool = true;
 var g_config: config.Config = .{};
 
 // Settings
@@ -71,19 +72,18 @@ pub fn isToggleMode() bool {
 }
 
 fn startRecording() void {
-    const capture = g_capture orelse return;
+    const recorder = g_recorder orelse return;
     if (g_is_recording) return;
     if (g_is_processing) return; // Block while still processing previous recording
 
-    capture.start() catch return;
+    recorder.startRecording() catch return;
     g_is_recording = true;
     tray.setRecording(true);
     overlay.show();
 }
 
 fn stopRecordingAndTranscribe() void {
-    const capture = g_capture orelse return;
-    const stt = g_stt orelse return;
+    const recorder = g_recorder orelse return;
     const injector = g_injector orelse return;
 
     if (!g_is_recording) return;
@@ -98,15 +98,9 @@ fn stopRecordingAndTranscribe() void {
         overlay.hide();
     }
 
-    const samples = capture.stop() catch return;
-    defer if (samples.len > 0) g_allocator.free(samples);
-
-    // Need at least 0.3 seconds of audio
-    if (samples.len < 16000 * 0.3) return;
-
     // Transcribe with configured language
     const lang_code = g_config.language.whisperCode();
-    const text = stt.transcribeWithLanguage(samples, lang_code) catch return;
+    const text = recorder.stopAndTranscribeWithLanguage(lang_code) catch return;
     defer g_allocator.free(text);
 
     if (text.len == 0) return;
@@ -148,7 +142,9 @@ fn onKeyRelease() void {
 }
 
 fn onQuit() void {
-    g_running = false;
+    if (g_app) |app| {
+        app.terminate();
+    }
 }
 
 pub fn getHotkeyString() ?[]const u8 {
@@ -193,8 +189,6 @@ pub fn main() !void {
                     cli_options.tmux_target = next;
                 } else {
                     cli_options.tmux_target = ""; // auto-detect
-                    // Put it back for next iteration - we can't, so we need to handle it
-                    // Actually we need to check if it's another flag
                     if (std.mem.eql(u8, next, "--clip")) {
                         cli_options.clipboard = true;
                     } else if (std.mem.eql(u8, next, "--duration")) {
@@ -263,30 +257,30 @@ pub fn main() !void {
     g_config = config.Config.load(allocator) catch .{};
     g_toggle_mode = g_config.toggle_mode;
 
-    // Find and load whisper model based on config
-    const model_path = whisper.findModel(allocator, g_config) orelse {
+    // Initialize HeadlessApp (provides GTK event loop)
+    var app = try ziew.HeadlessApp.init(allocator, .{
+        .name = "Wysp",
+    });
+    defer app.deinit();
+    g_app = &app;
+
+    // Find and load whisper model using ziew's whisper plugin
+    const model_path = whisper.findModel(allocator, null) orelse {
         try stderr.print("Error: No whisper model found.\n", .{});
-        try stderr.print("Download a model from the tray menu or manually to ~/.wysp/models/\n", .{});
+        try stderr.print("Download a model to ~/.ziew/models/ or ~/.wysp/models/\n", .{});
         return;
     };
     defer allocator.free(model_path);
 
-    var stt = whisper.Whisper.init(allocator, model_path) catch |err| {
-        try stderr.print("Failed to load model: {}\n", .{err});
+    // Initialize whisper recorder using ziew's whisper plugin
+    var recorder = whisper.Recorder.init(allocator, model_path) catch |err| {
+        try stderr.print("Failed to init whisper: {}\n", .{err});
         return;
     };
-    defer stt.deinit();
-    g_stt = &stt;
+    defer recorder.deinit();
+    g_recorder = &recorder;
 
-    // Initialize audio capture
-    var capture = audio.AudioCapture.init(allocator) catch |err| {
-        try stderr.print("Failed to init audio: {}\n", .{err});
-        return;
-    };
-    defer capture.deinit();
-    g_capture = &capture;
-
-    // Initialize text injector
+    // Initialize text injector (wysp-specific for now)
     var injector = inject.TextInjector.init(allocator) catch |err| {
         try stderr.print("Failed to init text injection: {}\n", .{err});
         return;
@@ -294,14 +288,14 @@ pub fn main() !void {
     defer injector.deinit();
     g_injector = &injector;
 
-    // Initialize overlay
+    // Initialize overlay (wysp-specific visual feedback)
     overlay.create() catch |err| {
         try stderr.print("Failed to create overlay: {}\n", .{err});
         return;
     };
     defer overlay.destroy();
 
-    // Initialize tray
+    // Initialize tray (wysp's own tray with full menu features)
     tray.create() catch |err| {
         try stderr.print("Failed to create tray: {}\n", .{err});
         return;
@@ -309,22 +303,29 @@ pub fn main() !void {
     defer tray.destroy();
     tray.onQuitClick(onQuit);
 
-    // Initialize hotkey with config
-    hotkey.initWithConfig(g_config.hotkey) catch |err| {
-        try stderr.print("Failed to init hotkey: {}\n", .{err});
+    // Initialize hotkeys using ziew plugin
+    hotkeys.init(allocator) catch |err| {
+        try stderr.print("Failed to init hotkeys: {}\n", .{err});
         return;
     };
-    defer hotkey.deinit();
-    hotkey.setCallbacks(onKeyPress, onKeyRelease);
+    defer hotkeys.deinit();
 
-    // Show startup message with configured hotkey
+    // Parse hotkey from config
     const hotkey_str = g_config.hotkey.format(allocator) catch "Ctrl+Shift+Space";
     defer if (!std.mem.eql(u8, hotkey_str, "Ctrl+Shift+Space")) allocator.free(hotkey_str);
-    try stderr.print("Wysp running. Hold {s} to record. Right-click tray to quit.\n", .{hotkey_str});
 
-    // Main loop - process GTK events
-    while (g_running) {
-        overlay.processEvents();
-        std.time.sleep(50 * std.time.ns_per_ms);
-    }
+    const hk = hotkeys.parseHotkey(hotkey_str) catch {
+        try stderr.print("Invalid hotkey config\n", .{});
+        return;
+    };
+
+    // Register hotkey with press and release callbacks
+    // Hold mode: press starts, release stops
+    // Toggle mode: press toggles (release does nothing)
+    try hotkeys.register(hk.modifiers, hk.key, onKeyPress, onKeyRelease);
+
+    try stderr.print("Wysp running. Press {s} to record. Right-click tray to quit.\n", .{hotkey_str});
+
+    // Run the app (blocking)
+    app.run();
 }

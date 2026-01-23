@@ -51,6 +51,7 @@ See [Building](#building) below.
 - **Push-to-Talk** — Hold your hotkey to record, release to transcribe and type. Default: `Ctrl+Shift+Space`
 - **Configurable Hotkey** — Change the hotkey via `~/.wysp/config.json`
 - **Toggle Mode** — Optional tap-to-start, tap-to-stop mode for longer dictation.
+- **Start on Login** — Option to launch automatically when you log in.
 - **System Tray** — Runs quietly in your system tray with visual feedback when recording.
 - **Recent History** — Access your last 10 transcriptions from the tray menu. Click to copy.
 - **Custom Icons** — Supports custom tray icons for idle and recording states.

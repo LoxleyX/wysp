@@ -250,6 +250,12 @@ const LinuxTray = struct {
         _ = gtk.g_signal_connect_data(@ptrCast(toggle_item), "toggled", @ptrCast(&onToggleMode), null, null, 0);
         gtk.gtk_menu_shell_append(@ptrCast(menu), toggle_item);
 
+        // Start on login checkbox
+        const autostart_item = gtk.gtk_check_menu_item_new_with_label("Start on Login");
+        gtk.gtk_check_menu_item_set_active(@ptrCast(autostart_item), if (isAutostartEnabled()) 1 else 0);
+        _ = gtk.g_signal_connect_data(@ptrCast(autostart_item), "toggled", @ptrCast(&onAutostartToggle), null, null, 0);
+        gtk.gtk_menu_shell_append(@ptrCast(menu), autostart_item);
+
         // Separator
         gtk.gtk_menu_shell_append(@ptrCast(menu), gtk.gtk_separator_menu_item_new());
 
@@ -386,6 +392,57 @@ const LinuxTray = struct {
         const main = @import("main.zig");
         const active = gtk.gtk_check_menu_item_get_active(item) != 0;
         main.setToggleMode(active);
+    }
+
+    fn isAutostartEnabled() bool {
+        const home = std.posix.getenv("HOME") orelse return false;
+        var path_buf: [512]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/.config/autostart/wysp.desktop", .{home}) catch return false;
+        return std.fs.cwd().access(path, .{}) != error.FileNotFound;
+    }
+
+    fn onAutostartToggle(item: *gtk.GtkCheckMenuItem, _: ?*anyopaque) callconv(.C) void {
+        const active = gtk.gtk_check_menu_item_get_active(item) != 0;
+        const home = std.posix.getenv("HOME") orelse return;
+
+        var dir_buf: [512]u8 = undefined;
+        const dir_path = std.fmt.bufPrint(&dir_buf, "{s}/.config/autostart", .{home}) catch return;
+
+        var path_buf: [512]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/.config/autostart/wysp.desktop", .{home}) catch return;
+
+        if (active) {
+            // Create autostart directory if needed
+            std.fs.cwd().makePath(dir_path) catch {};
+
+            // Find wysp binary path
+            var exe_buf: [512]u8 = undefined;
+            const exe_path = std.fs.selfExePath(&exe_buf) catch "/usr/bin/wysp";
+
+            // Create .desktop file
+            const desktop_content =
+                \\[Desktop Entry]
+                \\Type=Application
+                \\Name=Wysp
+                \\Comment=Local voice-to-text
+                \\Exec={s}
+                \\Icon=wysp
+                \\Terminal=false
+                \\Categories=Audio;Utility;
+                \\X-GNOME-Autostart-enabled=true
+                \\
+            ;
+
+            var content_buf: [1024]u8 = undefined;
+            const content = std.fmt.bufPrint(&content_buf, desktop_content, .{exe_path}) catch return;
+
+            const file = std.fs.cwd().createFile(path, .{}) catch return;
+            defer file.close();
+            file.writeAll(content) catch return;
+        } else {
+            // Remove autostart file
+            std.fs.cwd().deleteFile(path) catch {};
+        }
     }
 
     fn onRecentClick(_: *gtk.GtkMenuItem, user_data: ?*anyopaque) callconv(.C) void {

@@ -27,15 +27,17 @@ jobs:
         with:
           version: 0.13.0
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp (static)
         run: |
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=$HOME/.wysp \
-            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_SHARED_LIBS=OFF \
             -DGGML_CPU=ON \
+            -DGGML_STATIC=ON \
+            -DGGML_OPENMP=OFF \
             -DWHISPER_BUILD_EXAMPLES=OFF \
             -DWHISPER_BUILD_TESTS=OFF
           cmake --build build -j$(nproc)

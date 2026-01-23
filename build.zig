@@ -41,6 +41,9 @@ pub fn build(b: *std.Build) void {
         exe.linkSystemLibrary("ggml-base");
         exe.linkSystemLibrary("ggml-cpu");
 
+        // C++ standard library for whisper.cpp (static linking)
+        exe.linkLibCpp();
+
         // Required by miniaudio on Linux
         exe.linkSystemLibrary("pthread");
         exe.linkSystemLibrary("m");
@@ -52,9 +55,6 @@ pub fn build(b: *std.Build) void {
 
         // GTK for tray icon and overlay
         exe.linkSystemLibrary("gtk+-3.0");
-
-        // Set rpath so it finds whisper libs at runtime
-        exe.addRPath(.{ .cwd_relative = whisper_lib });
     } else if (target_os == .windows) {
         // Windows libraries - check env vars for whisper location
         if (getEnv(b.allocator, "WHISPER_LIB")) |whisper_lib| {

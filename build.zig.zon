@@ -1,6 +1,6 @@
 .{
     .name = "wysp",
-    .version = "0.2.2",
+    .version = "0.2.3",
     .dependencies = .{
         .ziew = .{
             .url = "https://github.com/ziews/ziew/archive/f06582e.tar.gz",

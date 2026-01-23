@@ -1,9 +1,10 @@
 .{
     .name = "wysp",
-    .version = "0.2.1",
+    .version = "0.2.2",
     .dependencies = .{
         .ziew = .{
-            .path = "../../ziew/ziew",
+            .url = "https://github.com/ziews/ziew/archive/452ce72.tar.gz",
+            .hash = "12204efd8bf4b57ea6ef7c5928524cdc34f073a26ff7ae8bb62bc12fe527479109d3",
         },
     },
     .paths = .{

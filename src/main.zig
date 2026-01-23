@@ -280,7 +280,7 @@ pub fn main() !void {
     defer recorder.deinit();
     g_recorder = &recorder;
 
-    // Initialize text injector (wysp-specific for now)
+    // Initialize text injector
     var injector = inject.TextInjector.init(allocator) catch |err| {
         try stderr.print("Failed to init text injection: {}\n", .{err});
         return;

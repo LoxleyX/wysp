@@ -30,7 +30,10 @@ pub fn build(b: *std.Build) void {
     // Link the webview library from ziew
     exe.linkLibrary(ziew_dep.artifact("webview"));
 
-    // Audio capture (miniaudio) - wysp's own implementation
+    // Add ziew's vendor include path (for whisper plugin's audio_capture.h)
+    exe.addIncludePath(ziew_dep.path("vendor"));
+
+    // Audio capture (miniaudio) - use ziew's implementation
     exe.addIncludePath(b.path("vendor"));
     exe.addCSourceFile(.{
         .file = b.path("vendor/audio_capture.c"),

@@ -81,7 +81,7 @@ jobs:
           Priority: optional
           Architecture: amd64
           Depends: libgtk-3-0, libx11-6, libxtst6
-          Maintainer: Wysp <wysp@example.com>
+          Maintainer: Wysp <contact@wysp.sh>
           Description: Local voice-to-text for any application
            Wysp is a completely local, privacy-respecting speech-to-text tool.
            Hold a hotkey, speak, release - your words appear at the cursor.

@@ -27,10 +27,17 @@ jobs:
         with:
           version: 0.13.0
 
-      - name: Build whisper.cpp (static)
+      - name: Build whisper.cpp with Zig (static)
         run: |
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
+
+          # Use Zig as C/C++ compiler for ABI compatibility with Zig's libc++
+          export CC="zig cc"
+          export CXX="zig c++"
+          export AR="zig ar"
+          export RANLIB="zig ranlib"
+
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=$HOME/.wysp \
@@ -38,6 +45,7 @@ jobs:
             -DGGML_CPU=ON \
             -DGGML_STATIC=ON \
             -DGGML_OPENMP=OFF \
+            -DGGML_CCACHE=OFF \
             -DWHISPER_BUILD_EXAMPLES=OFF \
             -DWHISPER_BUILD_TESTS=OFF
           cmake --build build -j$(nproc)

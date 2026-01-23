@@ -641,9 +641,18 @@ const WindowsTray = struct {
         const ID_TOGGLE_MODE: usize = 10;
         const ID_EDIT_CONFIG: usize = 20;
         const ID_CLEAR_HISTORY: usize = 30;
+        const ID_AUTOSTART: usize = 40;
         const ID_MODEL_BASE: usize = 100; // 100-104 for models
         const ID_LANG_BASE: usize = 200; // 200-201 for languages
         const ID_RECENT_BASE: usize = 300; // 300-309 for recent
+
+        // Registry constants
+        const HKEY = ?*anyopaque;
+        const HKEY_CURRENT_USER: HKEY = @ptrFromInt(0x80000001);
+        const KEY_READ: DWORD = 0x20019;
+        const KEY_WRITE: DWORD = 0x20006;
+        const REG_SZ: DWORD = 1;
+        const ERROR_SUCCESS: i32 = 0;
 
         const NOTIFYICONDATAA = extern struct {
             cbSize: DWORD,
@@ -713,6 +722,12 @@ const WindowsTray = struct {
         extern "kernel32" fn GlobalAlloc(uFlags: UINT, dwBytes: usize) callconv(.C) ?*anyopaque;
         extern "kernel32" fn GlobalLock(hMem: ?*anyopaque) callconv(.C) ?*anyopaque;
         extern "kernel32" fn GlobalUnlock(hMem: ?*anyopaque) callconv(.C) BOOL;
+        extern "kernel32" fn GetModuleFileNameA(hModule: HINSTANCE, lpFilename: [*]u8, nSize: DWORD) callconv(.C) DWORD;
+        extern "advapi32" fn RegOpenKeyExA(hKey: HKEY, lpSubKey: [*:0]const u8, ulOptions: DWORD, samDesired: DWORD, phkResult: *HKEY) callconv(.C) i32;
+        extern "advapi32" fn RegQueryValueExA(hKey: HKEY, lpValueName: [*:0]const u8, lpReserved: ?*DWORD, lpType: ?*DWORD, lpData: ?[*]u8, lpcbData: ?*DWORD) callconv(.C) i32;
+        extern "advapi32" fn RegSetValueExA(hKey: HKEY, lpValueName: [*:0]const u8, Reserved: DWORD, dwType: DWORD, lpData: [*]const u8, cbData: DWORD) callconv(.C) i32;
+        extern "advapi32" fn RegDeleteValueA(hKey: HKEY, lpValueName: [*:0]const u8) callconv(.C) i32;
+        extern "advapi32" fn RegCloseKey(hKey: HKEY) callconv(.C) i32;
     };
 
     var g_nid: win32.NOTIFYICONDATAA = undefined;
@@ -851,6 +866,10 @@ const WindowsTray = struct {
         const toggle_flags = win32.MF_STRING | (if (main.isToggleMode()) win32.MF_CHECKED else win32.MF_UNCHECKED);
         _ = win32.AppendMenuA(menu, toggle_flags, win32.ID_TOGGLE_MODE, "Toggle Mode (tap to start/stop)");
 
+        // Start on Login
+        const autostart_flags = win32.MF_STRING | (if (isAutostartEnabled()) win32.MF_CHECKED else win32.MF_UNCHECKED);
+        _ = win32.AppendMenuA(menu, autostart_flags, win32.ID_AUTOSTART, "Start on Login");
+
         // Separator
         _ = win32.AppendMenuA(menu, win32.MF_SEPARATOR, 0, null);
 
@@ -964,6 +983,8 @@ const WindowsTray = struct {
             openConfigEditor();
         } else if (cmd == win32.ID_CLEAR_HISTORY) {
             main.clearRecentTranscriptions();
+        } else if (cmd == win32.ID_AUTOSTART) {
+            toggleAutostart();
         } else if (cmd >= win32.ID_MODEL_BASE and cmd < win32.ID_MODEL_BASE + 5) {
             // Model selection
             const model_idx = cmd - win32.ID_MODEL_BASE;
@@ -1048,6 +1069,42 @@ const WindowsTray = struct {
                 @as([*]u8, @ptrCast(ptr))[text.len] = 0;
                 _ = win32.GlobalUnlock(h);
                 _ = win32.SetClipboardData(1, h); // CF_TEXT
+            }
+        }
+    }
+
+    fn isAutostartEnabled() bool {
+        const reg_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        var hkey: win32.HKEY = null;
+
+        if (win32.RegOpenKeyExA(win32.HKEY_CURRENT_USER, reg_path, 0, win32.KEY_READ, &hkey) != win32.ERROR_SUCCESS) {
+            return false;
+        }
+        defer _ = win32.RegCloseKey(hkey);
+
+        var data_size: win32.DWORD = 0;
+        const result = win32.RegQueryValueExA(hkey, "Wysp", null, null, null, &data_size);
+        return result == win32.ERROR_SUCCESS and data_size > 0;
+    }
+
+    fn toggleAutostart() void {
+        const reg_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        var hkey: win32.HKEY = null;
+
+        if (win32.RegOpenKeyExA(win32.HKEY_CURRENT_USER, reg_path, 0, win32.KEY_WRITE, &hkey) != win32.ERROR_SUCCESS) {
+            return;
+        }
+        defer _ = win32.RegCloseKey(hkey);
+
+        if (isAutostartEnabled()) {
+            // Remove autostart
+            _ = win32.RegDeleteValueA(hkey, "Wysp");
+        } else {
+            // Add autostart - get exe path
+            var exe_path: [512]u8 = [_]u8{0} ** 512;
+            const len = win32.GetModuleFileNameA(null, &exe_path, 512);
+            if (len > 0) {
+                _ = win32.RegSetValueExA(hkey, "Wysp", 0, win32.REG_SZ, &exe_path, len + 1);
             }
         }
     }

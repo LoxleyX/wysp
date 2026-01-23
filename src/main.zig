@@ -24,6 +24,7 @@ var g_config: config.Config = .{};
 // Settings
 var g_toggle_mode: bool = false;
 var g_is_recording: bool = false;
+var g_is_processing: bool = false;
 
 // Recent transcriptions (circular buffer)
 const MAX_RECENT = 10;
@@ -72,6 +73,7 @@ pub fn isToggleMode() bool {
 fn startRecording() void {
     const capture = g_capture orelse return;
     if (g_is_recording) return;
+    if (g_is_processing) return; // Block while still processing previous recording
 
     capture.start() catch return;
     g_is_recording = true;
@@ -86,31 +88,26 @@ fn stopRecordingAndTranscribe() void {
 
     if (!g_is_recording) return;
     g_is_recording = false;
+    g_is_processing = true;
 
     tray.setRecording(false);
     overlay.setText("Processing...");
 
-    const samples = capture.stop() catch {
+    defer {
+        g_is_processing = false;
         overlay.hide();
-        return;
-    };
+    }
+
+    const samples = capture.stop() catch return;
     defer if (samples.len > 0) g_allocator.free(samples);
 
     // Need at least 0.3 seconds of audio
-    if (samples.len < 16000 * 0.3) {
-        overlay.hide();
-        return;
-    }
+    if (samples.len < 16000 * 0.3) return;
 
     // Transcribe with configured language
     const lang_code = g_config.language.whisperCode();
-    const text = stt.transcribeWithLanguage(samples, lang_code) catch {
-        overlay.hide();
-        return;
-    };
+    const text = stt.transcribeWithLanguage(samples, lang_code) catch return;
     defer g_allocator.free(text);
-
-    overlay.hide();
 
     if (text.len == 0) return;
 

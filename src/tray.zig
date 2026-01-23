@@ -102,6 +102,12 @@ const LinuxTray = struct {
             } else |_| {}
         }
 
+        // Check system path /usr/share/wysp/ (for .deb installs)
+        const sys_path = "/usr/share/wysp/" ++ name;
+        if (std.fs.accessAbsolute(sys_path, .{})) |_| {
+            return std.heap.c_allocator.dupeZ(u8, sys_path) catch null;
+        } else |_| {}
+
         return null;
     }
 

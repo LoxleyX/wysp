@@ -78,11 +78,13 @@ jobs:
           mkdir -p ${PKG_DIR}/usr/bin
           mkdir -p ${PKG_DIR}/usr/share/applications
           mkdir -p ${PKG_DIR}/usr/share/icons/hicolor/128x128/apps
+          mkdir -p ${PKG_DIR}/usr/share/wysp
           mkdir -p ${PKG_DIR}/usr/share/doc/wysp
 
           cp zig-out/bin/wysp ${PKG_DIR}/usr/bin/
           cp README.md LICENSE ${PKG_DIR}/usr/share/doc/wysp/
           cp logo.png ${PKG_DIR}/usr/share/icons/hicolor/128x128/apps/wysp.png 2>/dev/null || true
+          cp logo.png logo-recording.png ${PKG_DIR}/usr/share/wysp/ 2>/dev/null || true
 
           cat > ${PKG_DIR}/DEBIAN/control << EOF
           Package: wysp

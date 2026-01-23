@@ -113,7 +113,6 @@ jobs:
           sed -i 's/^          //' ${PKG_DIR}/usr/share/applications/wysp.desktop
 
           dpkg-deb --build ${PKG_DIR}
-          mv ${PKG_DIR}.deb wysp_${VERSION}_amd64.deb
 
       - name: Create source package
         run: |

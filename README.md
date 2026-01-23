@@ -36,7 +36,7 @@ Or download from [Releases](https://github.com/LoxleyX/wysp/releases):
 
 ### Windows
 
-Download `wysp-windows-x86_64.zip` from [Releases](https://github.com/LoxleyX/wysp/releases) and extract to a folder of your choice.
+Download `wysp.exe` from [Releases](https://github.com/LoxleyX/wysp/releases) and place it in a folder of your choice (e.g., `C:\Program Files\Wysp\`).
 
 ### From Source
 

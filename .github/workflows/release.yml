@@ -20,48 +20,45 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev mingw-w64
+          sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev cmake build-essential
 
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.13.0
 
-      - name: Build whisper.cpp (Linux)
+      - name: Build whisper.cpp
         run: |
-          git clone https://github.com/ggerganov/whisper.cpp
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
-          cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/.wysp
-          cmake --build build --config Release -j$(nproc)
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/.wysp \
+            -DBUILD_SHARED_LIBS=ON \
+            -DGGML_CPU=ON \
+            -DWHISPER_BUILD_EXAMPLES=OFF \
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build -j$(nproc)
           cmake --install build
 
-      - name: Build whisper.cpp (Windows cross-compile)
-        run: |
-          cd whisper.cpp
-          cmake -B build-win \
-            -DCMAKE_SYSTEM_NAME=Windows \
-            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
-            -DCMAKE_INSTALL_PREFIX=$HOME/.wysp-win \
-            -DBUILD_SHARED_LIBS=OFF
-          cmake --build build-win --config Release -j$(nproc)
-          cmake --install build-win
+          # Debug: show installed files
+          echo "=== Installed library files ==="
+          ls -la $HOME/.wysp/lib/ 2>/dev/null || ls -la $HOME/.wysp/lib64/ 2>/dev/null || echo "No lib dir"
 
-      - name: Build wysp (Linux)
+      - name: Build wysp
         run: |
-          export WHISPER_LIB=$HOME/.wysp/lib
+          # Find where libraries were installed
+          if [ -d "$HOME/.wysp/lib64" ]; then
+            export WHISPER_LIB=$HOME/.wysp/lib64
+          else
+            export WHISPER_LIB=$HOME/.wysp/lib
+          fi
           export WHISPER_INCLUDE=$HOME/.wysp/include
-          zig build -Doptimize=ReleaseFast
 
-      - name: Build wysp (Windows)
-        run: |
-          export WHISPER_LIB=$HOME/.wysp-win/lib
-          export WHISPER_INCLUDE=$HOME/.wysp-win/include
-          zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu
-          mv zig-out/bin/wysp.exe zig-out/bin/wysp-windows.exe
-          # Rebuild for Linux
-          export WHISPER_LIB=$HOME/.wysp/lib
-          export WHISPER_INCLUDE=$HOME/.wysp/include
+          echo "WHISPER_LIB=$WHISPER_LIB"
+          echo "WHISPER_INCLUDE=$WHISPER_INCLUDE"
+          ls -la $WHISPER_LIB/ || echo "Cannot list lib dir"
+
           zig build -Doptimize=ReleaseFast
 
       - name: Package Linux binary
@@ -71,14 +68,6 @@ jobs:
           cp README.md LICENSE wysp-linux-x86_64/
           cp logo.png logo-recording.png wysp-linux-x86_64/ 2>/dev/null || true
           tar -czvf wysp-linux-x86_64.tar.gz wysp-linux-x86_64
-
-      - name: Package Windows binary
-        run: |
-          mkdir -p wysp-windows-x86_64
-          cp zig-out/bin/wysp-windows.exe wysp-windows-x86_64/wysp.exe
-          cp README.md LICENSE wysp-windows-x86_64/
-          cp logo.png logo-recording.png wysp-windows-x86_64/ 2>/dev/null || true
-          zip -r wysp-windows-x86_64.zip wysp-windows-x86_64
 
       - name: Create Debian package
         run: |
@@ -95,7 +84,7 @@ jobs:
           cp README.md LICENSE ${PKG_DIR}/usr/share/doc/wysp/
           cp logo.png ${PKG_DIR}/usr/share/icons/hicolor/128x128/apps/wysp.png 2>/dev/null || true
 
-          cat > ${PKG_DIR}/DEBIAN/control << 'EOF'
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
           Package: wysp
           Version: ${VERSION}
           Section: sound
@@ -108,12 +97,9 @@ jobs:
            Hold a hotkey, speak, release - your words appear at the cursor.
            100% offline. No cloud. No telemetry.
           EOF
-          # Fix indentation (control file must not have leading spaces)
           sed -i 's/^          //' ${PKG_DIR}/DEBIAN/control
-          # Substitute version
-          sed -i "s/\${VERSION}/${VERSION}/" ${PKG_DIR}/DEBIAN/control
 
-          cat > ${PKG_DIR}/usr/share/applications/wysp.desktop << 'EOF'
+          cat > ${PKG_DIR}/usr/share/applications/wysp.desktop << EOF
           [Desktop Entry]
           Name=Wysp
           Comment=Local voice-to-text for any application
@@ -139,7 +125,6 @@ jobs:
         with:
           files: |
             wysp-linux-x86_64.tar.gz
-            wysp-windows-x86_64.zip
             wysp_${{ steps.version.outputs.VERSION }}_amd64.deb
             wysp-${{ steps.version.outputs.VERSION }}-source.tar.gz
           generate_release_notes: true
